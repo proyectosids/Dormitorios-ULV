@@ -4,7 +4,9 @@ import sql from 'mssql';
 
 const router = Router();
 
+// ==========================================
 // 1. GET: Listar todos (básico)
+// ==========================================
 router.get('/', async (req, res) => {
   try {
     const pool = await getConnection();
@@ -15,8 +17,8 @@ router.get('/', async (req, res) => {
         e.Carrera, 
         e.IdCuarto,
         c.NumeroCuarto
-      FROM Estudiantes e
-      INNER JOIN Cuartos c ON e.IdCuarto = c.IdCuarto
+      FROM dormi.Estudiantes e
+      INNER JOIN dormi.Cuartos c ON e.IdCuarto = c.IdCuarto
     `);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
@@ -24,8 +26,10 @@ router.get('/', async (req, res) => {
   }
 });
 
-// 2. GET: Estudiantes para asignación (Ruta ESPECÍFICA - VA PRIMERO)
-// Esta debe ir ANTES de /:matricula para que no se confunda
+// ==========================================
+// 2. GET: Estudiantes para asignación
+// (Esta debe ir ANTES de /:matricula)
+// ==========================================
 router.get('/para-asignacion', async (req, res) => {
   try {
     const pool = await getConnection();
@@ -35,8 +39,8 @@ router.get('/para-asignacion', async (req, res) => {
         E.NombreCompleto, 
         E.IdCuarto,
         C.NumeroCuarto AS CuartoActual
-      FROM Estudiantes E
-      LEFT JOIN Cuartos C ON E.IdCuarto = C.IdCuarto
+      FROM dormi.Estudiantes E
+      LEFT JOIN dormi.Cuartos C ON E.IdCuarto = C.IdCuarto
       ORDER BY E.NombreCompleto ASC
     `);
     res.json({ success: true, data: result.recordset });
@@ -46,10 +50,12 @@ router.get('/para-asignacion', async (req, res) => {
   }
 });
 
-// 3. PUT: Asignar cuarto (Ruta ESPECÍFICA - VA PRIMERO)
-// También la subimos por seguridad, para que no choque con PUT /:matricula
+// ==========================================
+// 3. PUT: Asignar cuarto
+// (Esta debe ir ANTES de /:matricula)
+// ==========================================
 router.put('/asignar-cuarto', async (req, res) => {
-  const { matricula,idDormitorio, idPasillo, idCuarto } = req.body;
+  const { matricula, idDormitorio, idPasillo, idCuarto } = req.body;
 
   if (!matricula || !idDormitorio || !idPasillo || !idCuarto) {
     return res.status(400).json({ success: false, message: 'Faltan datos.' });
@@ -63,7 +69,7 @@ router.put('/asignar-cuarto', async (req, res) => {
       .input('IdPasillo', sql.Int, idPasillo)
       .input('IdCuarto', sql.Int, idCuarto)
       .query(`
-        UPDATE Estudiantes
+        UPDATE dormi.Estudiantes
         SET
           IdDormitorio = @IdDormitorio, 
           IdPasillo = @IdPasillo,
@@ -78,20 +84,22 @@ router.put('/asignar-cuarto', async (req, res) => {
   }
 });
 
+// ==========================================
 // 4. GET: Obtener FOTO de perfil
-// checar esto 
+// (Consulta a BD Externa - NO CAMBIAR ESQUEMA)
+// ==========================================
 router.get('/:matricula/foto', async (req, res) => {
   const { matricula } = req.params;
 
   try {
     const pool = await getConnection();
     
+    // NOTA: Esta consulta apunta a [IDS-APP].[dbo], que es EXTERNO.
+    // NO le agregamos 'dormi.' porque fallaría.
     const result = await pool.request()
       .input('Matricula', sql.VarChar(20), matricula)
       .query(`
         SELECT TOP 1 documentoDigital 
-        -- 👇 AQUÍ ESTÁ EL CAMBIO CLAVE 👇
-        -- Reemplaza [SIAE] por el nombre REAL de tu otra base de datos
         FROM [IDS-APP].[dbo].[controlEscolar_DocumentosAlumno] 
         WHERE alu1Matricula = @Matricula 
           AND claveDocumento = 'FOTO' 
@@ -113,8 +121,7 @@ router.get('/:matricula/foto', async (req, res) => {
 
 
 // ---------------------------------------------------------
-// A PARTIR DE AQUÍ VAN LAS RUTAS DINÁMICAS (/:matricula)
-// Si las pones arriba, se "comen" a las rutas específicas.
+// RUTAS DINÁMICAS (/:matricula) - SIEMPRE AL FINAL
 // ---------------------------------------------------------
 
 router.get('/:matricula', async (req, res) => {
@@ -130,8 +137,8 @@ router.get('/:matricula', async (req, res) => {
           e.Carrera, 
           e.IdCuarto,
           c.NumeroCuarto
-        FROM Estudiantes e
-        LEFT JOIN Cuartos c ON e.IdCuarto = c.IdCuarto
+        FROM dormi.Estudiantes e
+        LEFT JOIN dormi.Cuartos c ON e.IdCuarto = c.IdCuarto
         WHERE e.Matricula = @Matricula
       `);
 
@@ -156,7 +163,7 @@ router.put('/:matricula', async (req, res) => {
       .input('Carrera', sql.VarChar(100), carrera)
       .input('IdCuarto', sql.Int, idCuarto)
       .query(`
-        UPDATE Estudiantes
+        UPDATE dormi.Estudiantes
         SET NombreCompleto = @NombreCompleto,
             Carrera = @Carrera,
             IdCuarto = @IdCuarto

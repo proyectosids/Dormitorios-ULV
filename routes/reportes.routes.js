@@ -4,16 +4,19 @@ import sql from 'mssql';
 
 const router = Router();
 
+// Subconsulta reutilizable para obtener el nombre de quien reportó
+// Ajustada para usar el esquema 'dormi'
 const getReportanteNombreQuery = `
   COALESCE(
-    (SELECT NombreCompleto FROM Estudiantes WHERE Matricula = R.ReportadoPor AND R.TipoUsuarioReportante = 'Monitor'),
-    (SELECT NombreCompleto FROM Preceptores WHERE ClaveEmpleado = R.ReportadoPor AND R.TipoUsuarioReportante = 'Preceptor'),
+    (SELECT NombreCompleto FROM dormi.Estudiantes WHERE Matricula = R.ReportadoPor AND R.TipoUsuarioReportante = 'Monitor'),
+    (SELECT NombreCompleto FROM dormi.Preceptores WHERE ClaveEmpleado = R.ReportadoPor AND R.TipoUsuarioReportante = 'Preceptor'),
     'Sistema' 
   ) AS ReportadoPorNombre
 `;
 
-
-
+// ==========================================
+// 1. GET Reportes de un estudiante
+// ==========================================
 router.get('/estudiante/:matricula', async (req, res) => {
   const { matricula } = req.params;
   console.log(`[API Reportes] GET /estudiante/${matricula}`);
@@ -29,8 +32,8 @@ router.get('/estudiante/:matricula', async (req, res) => {
           R.Estado,
           E.NombreCompleto AS NombreEstudianteReportado, 
           ${getReportanteNombreQuery} 
-        FROM Reportes R
-        INNER JOIN Estudiantes E ON R.MatriculaReportado = E.Matricula
+        FROM dormi.Reportes R
+        INNER JOIN dormi.Estudiantes E ON R.MatriculaReportado = E.Matricula
         WHERE R.MatriculaReportado = @Matricula
         ORDER BY R.FechaReporte DESC
       `);
@@ -41,9 +44,11 @@ router.get('/estudiante/:matricula', async (req, res) => {
     res.status(500).json({ success: false, message: 'Error al obtener reportes del estudiante', error: error.message });
   }
 });
-// crear nuevo reporte CON LÓGICA DE ACUMULACIÓN
+
+// ==========================================
+// 2. CREAR REPORTE (Con Lógica de Acumulación)
+// ==========================================
 router.post('/crear', async (req, res) => {
-  // AÑADIDO: idTipoReporte
   const { matriculaReportado, reportadoPor, tipoUsuarioReportante, motivo, idTipoReporte } = req.body;
   
   console.log(`[API Reportes] POST /crear - Alumno: ${matriculaReportado}, Tipo: ${idTipoReporte}`);
@@ -73,9 +78,9 @@ router.post('/crear', async (req, res) => {
         .input('Estado', sql.VarChar(20), estado)
         .input('ClavePreceptorAprobador', sql.VarChar(10), preceptorAprobador)
         .input('FechaAprobacion', sql.DateTime, fechaAprobacion)
-        .input('IdTipoReporte', sql.Int, idTipoReporte) // <--- NUEVO CAMPO
+        .input('IdTipoReporte', sql.Int, idTipoReporte)
         .query(`
-          INSERT INTO Reportes
+          INSERT INTO dormi.Reportes
             (MatriculaReportado, ReportadoPor, TipoUsuarioReportante, Motivo, Estado, ClavePreceptorAprobador, FechaAprobacion, IdTipoReporte)
           VALUES
             (@MatriculaReportado, @ReportadoPor, @TipoUsuarioReportante, @Motivo, @Estado, @ClavePreceptorAprobador, @FechaAprobacion, @IdTipoReporte)
@@ -88,7 +93,7 @@ router.post('/crear', async (req, res) => {
         .input('IdTipoReporte', sql.Int, idTipoReporte)
         .query(`
           SELECT COUNT(*) as Total 
-          FROM Reportes 
+          FROM dormi.Reportes 
           WHERE MatriculaReportado = @Matricula
           AND IdTipoReporte = @IdTipoReporte
           AND MONTH(FechaReporte) = MONTH(GETDATE()) -- Mismo Mes
@@ -104,7 +109,7 @@ router.post('/crear', async (req, res) => {
         // Obtenemos nombre del mes y tipo para el mensaje
         const mesActual = new Date().toLocaleString('es-ES', { month: 'long' }).toUpperCase();
         
-        // Mapeo manual rápido para el mensaje (o podrías hacer una query extra)
+        // Mapeo manual rápido para el mensaje
         let nombreTipo = 'GENERAL';
         if(idTipoReporte == 1) nombreTipo = 'LIMPIEZA';
         if(idTipoReporte == 2) nombreTipo = 'DISCIPLINA';
@@ -113,15 +118,16 @@ router.post('/crear', async (req, res) => {
         console.log(`[Sistema] Alumno ${matriculaReportado} acumuló 3 reportes de ${nombreTipo}. Generando amonestación...`);
 
         // 3. GENERAR AMONESTACIÓN AUTOMÁTICA
-        // Asignamos Nivel 1 (Leve) por defecto a la acumulación, o cámbialo a 2 si prefieres.
+        // Asignamos Nivel 1 (Leve) por defecto.
+        // OJO: 'SISTEMA' debe existir en dormi.Preceptores
         await transaction.request()
           .input('MatriculaEstudiante', sql.VarChar(10), matriculaReportado)
-          .input('ClavePreceptor', sql.VarChar(10), 'SISTEMA') // <--- Usa el usuario virtual
+          .input('ClavePreceptor', sql.VarChar(10), 'SISTEMA') 
           .input('IdNivel', sql.Int, 1) // Nivel 1 = Leve
           .input('Motivo', sql.VarChar(200), `Acumulación de 3 reportes de ${nombreTipo} en ${mesActual} (Automática)`)
           .input('Fecha', sql.Date, new Date())
           .query(`
-            INSERT INTO Amonestaciones (MatriculaEstudiante, ClavePreceptor, IdNivel, Motivo, Fecha)
+            INSERT INTO dormi.Amonestaciones (MatriculaEstudiante, ClavePreceptor, IdNivel, Motivo, Fecha)
             VALUES (@MatriculaEstudiante, @ClavePreceptor, @IdNivel, @Motivo, @Fecha)
           `);
           
@@ -151,8 +157,9 @@ router.post('/crear', async (req, res) => {
   }
 });
 
-
-// ver todos los reportes
+// ==========================================
+// 3. VER TODOS LOS REPORTES (Paginación + Buscador)
+// ==========================================
 router.get('/', async (req, res) => {
   console.log(`[API Reportes] GET / (Todos)`);
   const { page = 1, limit = 20, search } = req.query; 
@@ -180,18 +187,18 @@ router.get('/', async (req, res) => {
         R.FechaReporte,
         R.Estado,
         ${getReportanteNombreQuery}
-      FROM Reportes R
-      INNER JOIN Estudiantes E ON R.MatriculaReportado = E.Matricula
-      ${whereClause} -- Añadimos el WHERE si hay búsqueda
+      FROM dormi.Reportes R
+      INNER JOIN dormi.Estudiantes E ON R.MatriculaReportado = E.Matricula
+      ${whereClause} 
       ORDER BY R.FechaReporte DESC
-      OFFSET ${offset} ROWS FETCH NEXT ${parseInt(limit)} ROWS ONLY; -- Paginación
+      OFFSET ${offset} ROWS FETCH NEXT ${parseInt(limit)} ROWS ONLY; 
     `;
 
      const countQuery = `
       SELECT COUNT(*) as total
-      FROM Reportes R
-      INNER JOIN Estudiantes E ON R.MatriculaReportado = E.Matricula
-      ${whereClause}; -- Mismo WHERE para el conteo
+      FROM dormi.Reportes R
+      INNER JOIN dormi.Estudiantes E ON R.MatriculaReportado = E.Matricula
+      ${whereClause}; 
     `;
 
     const result = await request.query(query); 
@@ -199,7 +206,7 @@ router.get('/', async (req, res) => {
 
     const totalReportes = totalResult.recordset[0].total;
 
-    console.log(`[API Reportes] GET / (Todos) - Encontrados: ${result.recordset.length} (Total: ${totalReportes}) Pág: ${page}, Lím: ${limit}, Search: '${search || ''}'`);
+    console.log(`[API Reportes] GET / (Todos) - Encontrados: ${result.recordset.length} (Total: ${totalReportes})`);
     res.json({ 
       success: true, 
       data: result.recordset,
@@ -214,7 +221,9 @@ router.get('/', async (req, res) => {
   }
 });
 
-
+// ==========================================
+// 4. APROBAR REPORTE
+// ==========================================
 router.put('/:idReporte/aprobar', async (req, res) =>{
   const { idReporte } = req.params;
   const { preceptorId } = req.body; 
@@ -231,7 +240,7 @@ router.put('/:idReporte/aprobar', async (req, res) =>{
       .input('PreceptorId', sql.VarChar(10), preceptorId)
       .input('FechaAprobacion', sql.DateTime, new Date())
       .query(`
-        UPDATE Reportes
+        UPDATE dormi.Reportes
         SET 
           Estado = 'Aprobado',
           ClavePreceptorAprobador = @PreceptorId,
@@ -250,7 +259,9 @@ router.put('/:idReporte/aprobar', async (req, res) =>{
   }
   });
 
-
+// ==========================================
+// 5. RECHAZAR REPORTE
+// ==========================================
 router.put('/:idReporte/rechazar', async (req, res) => {
   const { idReporte } = req.params;
 
@@ -260,9 +271,8 @@ router.put('/:idReporte/rechazar', async (req, res) => {
     const result = await pool.request()
       .input('IdReporte', sql.Int, idReporte)
       .query(`
-        UPDATE Reportes
+        UPDATE dormi.Reportes
         SET Estado = 'Rechazado'
-        -- Podríamos añadir un campo 'MotivoRechazo' si la BD lo tuviera
         WHERE IdReporte = @IdReporte AND Estado = 'Pendiente'
       `);
       
@@ -277,6 +287,4 @@ router.put('/:idReporte/rechazar', async (req, res) => {
   }
 });
 
-
 export default router;
-

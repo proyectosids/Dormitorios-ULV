@@ -4,30 +4,36 @@ import sql from 'mssql';
 
 const router = Router();
 
+// ==========================================
 // 0. Obtener lista de DORMITORIOS (Edificios)
+// ==========================================
 router.get('/', async (req, res) => {
   try {
     const pool = await getConnection();
-    const result = await pool.request().query('SELECT * FROM Dormitorios');
+    const result = await pool.request().query('SELECT * FROM dormi.Dormitorios');
     res.json({ success: true, data: result.recordset });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error al obtener dormitorios', error });
   }
 });
 
+// ==========================================
 // 1. Obtener todos los PASILLOS
+// ==========================================
 router.get('/pasillos', async (req, res) => {
   try {
     const pool = await getConnection();
     // Ajusta la consulta si quieres filtrar por dormitorio específico
-    const result = await pool.request().query('SELECT * FROM Pasillos');
+    const result = await pool.request().query('SELECT * FROM dormi.Pasillos');
     res.json({ success: true, data: result.recordset });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Error al obtener pasillos', error });
   }
 });
 
+// ==========================================
 // 2. Obtener CUARTOS de un pasillo específico
+// ==========================================
 router.get('/cuartos', async (req, res) => {
   const { idPasillo } = req.query; // Recibimos ?idPasillo=1
 
@@ -40,10 +46,10 @@ router.get('/cuartos', async (req, res) => {
     const result = await pool.request()
       .input('IdPasillo', sql.Int, idPasillo)
       .query(`
-        SELECT * FROM Cuartos 
+        SELECT * FROM dormi.Cuartos 
         WHERE IdPasillo = @IdPasillo
         -- Opcional: Mostrar solo cuartos con espacio disponible
-        -- AND (Capacidad - (SELECT COUNT(*) FROM Estudiantes WHERE IdCuarto = Cuartos.IdCuarto)) > 0
+        -- AND (Capacidad - (SELECT COUNT(*) FROM dormi.Estudiantes WHERE IdCuarto = Cuartos.IdCuarto)) > 0
       `);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
@@ -51,7 +57,9 @@ router.get('/cuartos', async (req, res) => {
   }
 });
 
-// 3. Obtener el MAPA DE OCUPACIÓN (Quién está en qué cuarto)
+// ==========================================
+// 3. Obtener el MAPA DE OCUPACIÓN
+// ==========================================
 router.get('/ocupacion', async (req, res) => {
   try {
     const pool = await getConnection();
@@ -62,9 +70,9 @@ router.get('/ocupacion', async (req, res) => {
         C.NumeroCuarto,
         C.Capacidad,
         E.NombreCompleto AS Estudiante
-      FROM Pasillos P
-      INNER JOIN Cuartos C ON P.IdPasillo = C.IdPasillo
-      LEFT JOIN Estudiantes E ON C.IdCuarto = E.IdCuarto
+      FROM dormi.Pasillos P
+      INNER JOIN dormi.Cuartos C ON P.IdPasillo = C.IdPasillo
+      LEFT JOIN dormi.Estudiantes E ON C.IdCuarto = E.IdCuarto
       ORDER BY P.NombrePasillo, C.NumeroCuarto
     `);
     

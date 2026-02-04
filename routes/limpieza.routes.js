@@ -4,7 +4,9 @@ import sql from 'mssql';
 
 const router = Router();
 
-// 1. Obtener DETALLE de limpieza (Corregido con LEFT JOIN)
+// ==========================================
+// 1. Obtener DETALLE de limpieza
+// ==========================================
 router.get('/detalle/:idCuarto', async (req, res) => {
   const { idCuarto } = req.params;
   try {
@@ -16,10 +18,10 @@ router.get('/detalle/:idCuarto', async (req, res) => {
           L.IdLimpieza, L.Fecha, L.OrdenGeneral, L.Disciplina, L.TotalFinal,
           E.NombreCompleto AS EvaluadoPor, 
           C.NumeroCuarto,
-          (SELECT SUM(Calificacion) FROM LimpiezaDetalle WHERE IdLimpieza = L.IdLimpieza) as Subtotal
-        FROM Limpieza L
-        LEFT JOIN Estudiantes E ON L.EvaluadoPorMatricula = E.Matricula 
-        INNER JOIN Cuartos C ON L.IdCuarto = C.IdCuarto
+          (SELECT SUM(Calificacion) FROM dormi.LimpiezaDetalle WHERE IdLimpieza = L.IdLimpieza) as Subtotal
+        FROM dormi.Limpieza L
+        LEFT JOIN dormi.Estudiantes E ON L.EvaluadoPorMatricula = E.Matricula 
+        INNER JOIN dormi.Cuartos C ON L.IdCuarto = C.IdCuarto
         WHERE L.IdCuarto = @IdCuarto
         ORDER BY L.Fecha DESC, L.IdLimpieza DESC
       `);
@@ -32,8 +34,8 @@ router.get('/detalle/:idCuarto', async (req, res) => {
       .input('IdLimpieza', sql.Int, idLimpieza)
       .query(`
         SELECT C.Descripcion AS Criterio, LD.Calificacion
-        FROM LimpiezaDetalle LD
-        INNER JOIN CriteriosLimpieza C ON LD.IdCriterio = C.IdCriterio
+        FROM dormi.LimpiezaDetalle LD
+        INNER JOIN dormi.CriteriosLimpieza C ON LD.IdCriterio = C.IdCriterio
         WHERE LD.IdLimpieza = @IdLimpieza
         ORDER BY C.IdCriterio
       `);
@@ -47,7 +49,9 @@ router.get('/detalle/:idCuarto', async (req, res) => {
   }
 });
 
-// 2. REGISTRAR Limpieza
+// ==========================================
+// 2. REGISTRAR Limpieza (Transacción)
+// ==========================================
 router.post('/registrar', async (req, res) => {
   const { idCuarto, evaluadoPor, detallesMatutinos, ordenGeneral, disciplina, observaciones } = req.body;
   
@@ -74,7 +78,7 @@ router.post('/registrar', async (req, res) => {
       .input('Disciplina', sql.Int, disciplina)
       .input('TotalFinal', sql.Int, totalFinal)
       .query(`
-        INSERT INTO Limpieza (IdCuarto, Fecha, EvaluadoPorMatricula, Observaciones, OrdenGeneral, Disciplina, TotalFinal)
+        INSERT INTO dormi.Limpieza (IdCuarto, Fecha, EvaluadoPorMatricula, Observaciones, OrdenGeneral, Disciplina, TotalFinal)
         OUTPUT INSERTED.IdLimpieza
         VALUES (@IdCuarto, @Fecha, @EvaluadoPorMatricula, @Observaciones, @OrdenGeneral, @Disciplina, @TotalFinal)
       `);
@@ -90,7 +94,7 @@ router.post('/registrar', async (req, res) => {
         .input('IdLimpieza', sql.Int, idLimpieza)
         .input('IdCriterio', sql.Int, detalle.idCriterio)
         .input('Calificacion', sql.Int, detalle.calificacion)
-        .query('INSERT INTO LimpiezaDetalle (IdLimpieza, IdCriterio, Calificacion) VALUES (@IdLimpieza, @IdCriterio, @Calificacion)');
+        .query('INSERT INTO dormi.LimpiezaDetalle (IdLimpieza, IdCriterio, Calificacion) VALUES (@IdLimpieza, @IdCriterio, @Calificacion)');
     }
     
     await transaction.commit();
@@ -102,11 +106,13 @@ router.post('/registrar', async (req, res) => {
   }
 });
 
+// ==========================================
 // 3. Obtener CRITERIOS
+// ==========================================
 router.get('/criterios', async (req, res) => {
   try {
     const pool = await getConnection();
-    const result = await pool.request().query(`SELECT IdCriterio, Descripcion FROM CriteriosLimpieza ORDER BY IdCriterio`);
+    const result = await pool.request().query(`SELECT IdCriterio, Descripcion FROM dormi.CriteriosLimpieza ORDER BY IdCriterio`);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
     console.error("Error en GET /criterios:", error);
@@ -114,7 +120,9 @@ router.get('/criterios', async (req, res) => {
   }
 });
 
-// 4. Obtener CUARTOS CON CALIFICACIÓN (Esta es la que te faltaba)
+// ==========================================
+// 4. Obtener CUARTOS CON CALIFICACIÓN
+// ==========================================
 router.get('/cuartos-con-calificacion', async (req, res) => {
   try {
     const pool = await getConnection();
@@ -124,14 +132,14 @@ router.get('/cuartos-con-calificacion', async (req, res) => {
           IdCuarto, 
           TotalFinal, 
           ROW_NUMBER() OVER(PARTITION BY IdCuarto ORDER BY Fecha DESC, IdLimpieza DESC) as rn 
-        FROM Limpieza
+        FROM dormi.Limpieza
       )
       SELECT 
         C.IdCuarto,
         C.NumeroCuarto,
         C.IdPasillo,
         UL.TotalFinal AS UltimaCalificacion 
-      FROM Cuartos C
+      FROM dormi.Cuartos C
       LEFT JOIN UltimaLimpieza UL ON C.IdCuarto = UL.IdCuarto AND UL.rn = 1 
       ORDER BY C.IdPasillo, C.NumeroCuarto;
     `);
@@ -142,7 +150,9 @@ router.get('/cuartos-con-calificacion', async (req, res) => {
   }
 });
 
-// 5. HISTORIAL (Corregido con LEFT JOIN)
+// ==========================================
+// 5. HISTORIAL
+// ==========================================
 router.get('/historial/:idCuarto', async (req, res) => {
   const { idCuarto } = req.params;
   try {
@@ -151,8 +161,8 @@ router.get('/historial/:idCuarto', async (req, res) => {
       .input('IdCuarto', sql.Int, idCuarto)
       .query(`
         SELECT l.IdLimpieza, l.Fecha, l.TotalFinal, e.NombreCompleto AS EvaluadoPor 
-        FROM Limpieza l 
-        LEFT JOIN Estudiantes e ON l.EvaluadoPorMatricula = e.Matricula 
+        FROM dormi.Limpieza l 
+        LEFT JOIN dormi.Estudiantes e ON l.EvaluadoPorMatricula = e.Matricula 
         WHERE l.IdCuarto = @IdCuarto 
         ORDER BY l.Fecha DESC, l.IdLimpieza DESC
       `);
@@ -163,7 +173,9 @@ router.get('/historial/:idCuarto', async (req, res) => {
   }
 });
 
-// RUTA CLAVE: OBTENER ESTADÍSTICAS (Con Lógica Manual de Cortes + Sábados)
+// ==========================================
+// 6. ESTADÍSTICAS GENERALES (Con Cortes)
+// ==========================================
 router.get('/estadisticas/generales', async (req, res) => {
   const { idSemestre } = req.query;
 
@@ -174,54 +186,49 @@ router.get('/estadisticas/generales', async (req, res) => {
     let fechaInicioSemestre = '2025-01-01'; // Fallback
     
     if (idSemestre) {
-        const sem = await pool.request().input('Id', sql.Int, idSemestre).query("SELECT FechaInicio FROM Semestres WHERE IdSemestre = @Id");
+        const sem = await pool.request().input('Id', sql.Int, idSemestre).query("SELECT FechaInicio FROM dormi.Semestres WHERE IdSemestre = @Id");
         if (sem.recordset.length > 0) fechaInicioSemestre = sem.recordset[0].FechaInicio;
     } else {
-        const sem = await pool.request().query("SELECT TOP 1 FechaInicio FROM Semestres WHERE Activo = 1");
+        const sem = await pool.request().query("SELECT TOP 1 FechaInicio FROM dormi.Semestres WHERE Activo = 1");
         if (sem.recordset.length > 0) fechaInicioSemestre = sem.recordset[0].FechaInicio;
     }
 
     // 2. Averiguar el ÚLTIMO CORTE MANUAL (Para saber desde dónde contar)
-    // Buscamos el corte más reciente que haya ocurrido DENTRO de este semestre
     const cortes = await pool.request()
       .input('FechaSemestre', sql.DateTime, fechaInicioSemestre)
       .query(`
         SELECT TOP 2 FechaCorte 
-        FROM CortesLimpieza 
+        FROM dormi.CortesLimpieza 
         WHERE FechaCorte >= @FechaSemestre 
         ORDER BY FechaCorte DESC
       `);
 
-    // Definir rangos:
-    // Rango "En Curso" (Lo nuevo): Desde el último corte hasta HOY.
-    // Si no ha habido cortes en este semestre, empieza desde el inicio del semestre.
+    // Definir rangos
     let inicioEnCurso = (cortes.recordset.length > 0) 
         ? cortes.recordset[0].FechaCorte 
         : fechaInicioSemestre;
     
-    // Rango "Publicado" (Lo viejo): El periodo anterior cerrado (para que los alumnos vean su nota final)
-    // Si hubo corte, es desde el corte anterior (o inicio semestre) hasta el corte reciente.
     let inicioPublicado = (cortes.recordset.length > 1) 
         ? cortes.recordset[1].FechaCorte 
         : fechaInicioSemestre;
         
     let finPublicado = (cortes.recordset.length > 0) 
         ? cortes.recordset[0].FechaCorte 
-        : new Date(); // Si no hay cortes, publicado muestra lo actual
+        : new Date();
 
     // 3. Query Maestra (Con filtro de Sábados)
     const queryBase = (fechaIni, fechaFin) => `
       SELECT 
-        ISNULL(P.Nombre, 'Sin Pasillo') AS Pasillo,
+        ISNULL(P.NombrePasillo, 'Sin Pasillo') AS Pasillo,
         AVG(CAST(L.TotalFinal AS FLOAT)) AS Promedio
-      FROM Limpieza L
-      INNER JOIN Cuartos C ON L.IdCuarto = C.IdCuarto
-      LEFT JOIN Pasillos P ON C.IdPasillo = P.IdPasillo
+      FROM dormi.Limpieza L
+      INNER JOIN dormi.Cuartos C ON L.IdCuarto = C.IdCuarto
+      LEFT JOIN dormi.Pasillos P ON C.IdPasillo = P.IdPasillo
       WHERE L.Fecha > '${new Date(fechaIni).toISOString()}' 
         AND L.Fecha <= '${new Date(fechaFin).toISOString()}'
         -- EXCLUIR SÁBADOS (0=Dom... 6=Sab)
         AND ((DATEPART(dw, L.Fecha) + @@DATEFIRST - 1) % 7) != 6 
-      GROUP BY P.Nombre
+      GROUP BY P.NombrePasillo
       ORDER BY Promedio DESC
     `;
 
@@ -231,8 +238,8 @@ router.get('/estadisticas/generales', async (req, res) => {
     res.json({
       success: true,
       data: {
-        enCurso: statsEnCurso.recordset,     // Esto ve el PRECEPTOR (se resetea al cortar)
-        publicadas: statsPublicadas.recordset, // Esto ven los ALUMNOS (resultado fijo)
+        enCurso: statsEnCurso.recordset,     
+        publicadas: statsPublicadas.recordset, 
         ultimoCorte: inicioEnCurso
       }
     });
@@ -243,14 +250,16 @@ router.get('/estadisticas/generales', async (req, res) => {
   }
 });
 
-// RUTA: REALIZAR CORTE (El botón manual)
+// ==========================================
+// 7. REALIZAR CORTE MANUAL
+// ==========================================
 router.post('/realizar-corte', async (req, res) => {
   const { realizadoPor } = req.body; 
   try {
     const pool = await getConnection();
     await pool.request()
       .input('RealizadoPor', sql.VarChar(20), realizadoPor)
-      .query(`INSERT INTO CortesLimpieza (FechaCorte, RealizadoPor) VALUES (GETDATE(), @RealizadoPor)`);
+      .query(`INSERT INTO dormi.CortesLimpieza (FechaCorte, RealizadoPor) VALUES (GETDATE(), @RealizadoPor)`);
       
     res.json({ success: true, message: 'Corte realizado. Las estadísticas se han reiniciado.' });
   } catch (error) {
@@ -259,17 +268,19 @@ router.post('/realizar-corte', async (req, res) => {
   }
 });
 
-//A. NUEVA RUTA: Obtener lista de semestres para el filtro
+// ==========================================
+// 8. OBTENER LISTA DE SEMESTRES
+// ==========================================
 router.get('/semestres-lista', async (req, res) => {
   try {
     const pool = await getConnection();
-    // Traemos todos los semestres ordenados del más reciente al más antiguo
     const result = await pool.request().query(`
-      SELECT IdSemestre, Nombre, Activo FROM Semestres ORDER BY IdSemestre DESC
+      SELECT IdSemestre, Nombre, Activo FROM dormi.Semestres ORDER BY IdSemestre DESC
     `);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 }); 
+
 export default router;

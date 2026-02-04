@@ -4,6 +4,9 @@ import sql from "mssql";
 
 const router = Router();
 
+// ==========================================
+// 1. REGISTRAR ASISTENCIA INDIVIDUAL
+// ==========================================
 router.post("/registrar", async (req, res) => {
   const { matriculaEstudiante, idTipoCulto, nombreTipoCulto, registradoPor, fecha } = req.body;
 
@@ -18,10 +21,12 @@ router.post("/registrar", async (req, res) => {
     const pool = await getConnection();
 
     let tipoCulto = idTipoCulto;
+    
+    // Si envían el nombre en vez del ID, buscamos el ID
     if (!tipoCulto && nombreTipoCulto) {
       const tipo = await pool.request()
         .input("Nombre", sql.VarChar(50), nombreTipoCulto)
-        .query("SELECT IdTipoCulto FROM Cat_TipoCulto WHERE Nombre = @Nombre");
+        .query("SELECT IdTipoCulto FROM dormi.Cat_TipoCulto WHERE Nombre = @Nombre");
 
       if (tipo.recordset.length === 0) {
         return res.status(400).json({ success: false, message: "Tipo de culto no existe" });
@@ -37,7 +42,7 @@ router.post("/registrar", async (req, res) => {
       .input("Fecha", sql.Date, fechaAsistencia)
       .input("RegistradoPor", sql.VarChar(10), registradoPor)
       .query(`
-        INSERT INTO AsistenciasCultos (MatriculaEstudiante, IdTipoCulto, Fecha, RegistradoPor)
+        INSERT INTO dormi.AsistenciasCultos (MatriculaEstudiante, IdTipoCulto, Fecha, RegistradoPor)
         VALUES (@Matricula, @IdTipoCulto, @Fecha, @RegistradoPor)
       `);
 
@@ -48,9 +53,9 @@ router.post("/registrar", async (req, res) => {
   }
 });
 
-router.get("/estudiante/:matricula", async (req, res) => {
-});
-
+// ==========================================
+// 2. VER ASISTENCIAS DE UN CULTO ESPECÍFICO
+// ==========================================
 router.get("/culto", async (req, res) => {
   const { idTipoCulto, fecha } = req.query;
 
@@ -73,8 +78,8 @@ router.get("/culto", async (req, res) => {
           a.IdAsistencia,
           a.MatriculaEstudiante,
           e.NombreCompleto
-        FROM AsistenciasCultos a
-        INNER JOIN Estudiantes e ON a.MatriculaEstudiante = e.Matricula
+        FROM dormi.AsistenciasCultos a
+        INNER JOIN dormi.Estudiantes e ON a.MatriculaEstudiante = e.Matricula
         WHERE a.IdTipoCulto = @IdTipoCulto AND CONVERT(date, a.Fecha) = CONVERT(date, @Fecha)
         ORDER BY e.NombreCompleto;
       `);
@@ -87,9 +92,9 @@ router.get("/culto", async (req, res) => {
 });
 
 
-
-// ver quienes faltaron 
-// 1. Obtener lista de FALTANTES
+// ==========================================
+// 3. VER QUIENES FALTARON (Comparativa)
+// ==========================================
 router.get("/faltantes", async (req, res) => {
   const { idTipoCulto, fecha } = req.query;
   if (!idTipoCulto) return res.status(400).json({ success: false, message: "Falta idTipoCulto" });
@@ -104,10 +109,10 @@ router.get("/faltantes", async (req, res) => {
       .input("Fecha", sql.Date, fechaBusqueda)
       .query(`
         SELECT E.Matricula, E.NombreCompleto, E.Carrera
-        FROM Estudiantes E
+        FROM dormi.Estudiantes E
         WHERE E.Matricula NOT IN (
             SELECT MatriculaEstudiante 
-            FROM AsistenciasCultos 
+            FROM dormi.AsistenciasCultos 
             WHERE IdTipoCulto = @IdTipoCulto 
             AND CONVERT(date, Fecha) = CONVERT(date, @Fecha)
         )
@@ -120,7 +125,9 @@ router.get("/faltantes", async (req, res) => {
   }
 });
 
-// 2. REPORTAR FALTANTES MASIVAMENTE (La lógica pesada)
+// ==========================================
+// 4. REPORTAR FALTANTES MASIVAMENTE (Lógica de Negocio)
+// ==========================================
 router.post("/reportar-faltantes", async (req, res) => {
   const { listaMatriculas, idTipoCulto, fecha, reportadoPor } = req.body; 
   console.log("Datos recibidos:", { listaMatriculas, idTipoCulto, fecha, reportadoPor });
@@ -136,24 +143,25 @@ router.post("/reportar-faltantes", async (req, res) => {
     await transaction.begin();
     const fechaReporte = fecha ? new Date(fecha) : new Date();
 
-    // A. Averiguar qué culto es (para saber el límite: Vespertina=2, Matutina=3)
+    // A. Averiguar qué culto es (para saber el límite de faltas permitidas)
     const datosCulto = await new sql.Request(transaction)
       .input("IdTipoCulto", sql.Int, idTipoCulto)
-      .query("SELECT Nombre FROM Cat_TipoCulto WHERE IdTipoCulto = @IdTipoCulto");
+      .query("SELECT Nombre FROM dormi.Cat_TipoCulto WHERE IdTipoCulto = @IdTipoCulto");
     
     const nombreCulto = datosCulto.recordset[0]?.Nombre || "";
     
-    let limiteFaltas = 3; // Default (Matutina y otros)
+    // Regla de Negocio: Vespertina = 2 faltas límite, Matutina = 3 faltas límite
+    let limiteFaltas = 3; 
     if (nombreCulto.toLowerCase().includes("vespertin")) {
-      limiteFaltas = 2; // Regla: Vespertina = 2
+      limiteFaltas = 2; 
     }
 
     // B. Recorrer cada estudiante que faltó
     for (const matricula of listaMatriculas) {
       const motivoFalta = `Falta injustificada a: ${nombreCulto}`;
 
-      // 1. Insertar en tabla REPORTES (Usando tus columnas reales)
-      // Usamos IdTipoReporte = 2 (Disciplina)
+      // 1. Insertar en tabla REPORTES (Disciplina)
+      // Usamos IdTipoReporte = 2 (Asumiendo que 2 es Disciplina/Falta según tu lógica)
       await new sql.Request(transaction)
         .input("Matricula", sql.VarChar(10), matricula)
         .input("ReportadoPor", sql.VarChar(10), reportadoPor) // Matrícula del Monitor
@@ -161,9 +169,9 @@ router.post("/reportar-faltantes", async (req, res) => {
         .input("Motivo", sql.VarChar(255), motivoFalta)
         .input("Fecha", sql.DateTime, new Date()) // Fecha y hora actual
         .input("Estado", sql.VarChar(50), 'Aprobado') // Automático
-        .input("IdTipoReporte", sql.Int, 2) // 2 = Disciplina
+        .input("IdTipoReporte", sql.Int, 2) // Asumiendo ID 2 para reportes de inasistencia/disciplina
         .query(`
-          INSERT INTO Reportes (MatriculaReportado, ReportadoPor, TipoUsuarioReportante, Motivo, FechaReporte, Estado, IdTipoReporte)
+          INSERT INTO dormi.Reportes (MatriculaReportado, ReportadoPor, TipoUsuarioReportante, Motivo, FechaReporte, Estado, IdTipoReporte)
           VALUES (@Matricula, @ReportadoPor, @TipoUsuario, @Motivo, @Fecha, @Estado, @IdTipoReporte)
         `);
 
@@ -174,7 +182,7 @@ router.post("/reportar-faltantes", async (req, res) => {
         .input("Anio", sql.Int, fechaReporte.getFullYear())
         .query(`
           SELECT COUNT(*) as Total 
-          FROM Reportes 
+          FROM dormi.Reportes 
           WHERE MatriculaReportado = @Matricula 
           AND IdTipoReporte = 2 
           AND MONTH(FechaReporte) = @Mes AND YEAR(FechaReporte) = @Anio
@@ -187,16 +195,16 @@ router.post("/reportar-faltantes", async (req, res) => {
       if (totalReportes > 0 && totalReportes % limiteFaltas === 0) {
          const motivoAmonestacion = `Acumulación de ${totalReportes} reportes de Disciplina (Límite del culto: ${limiteFaltas})`;
          
-         // Insertar en AMONESTACIONES (Usando tus columnas reales)
-         // Usamos IdNivel = 1 (Leve) por defecto
+         // Insertar en AMONESTACIONES
+         // OJO: 'SISTEMA' debe existir en dormi.Preceptores o dormi.Usuarios para que no falle la FK
          await new sql.Request(transaction)
           .input("Matricula", sql.VarChar(10), matricula)
-          .input("ClavePreceptor", sql.VarChar(10), 'SISTEMA') // Lo generó el sistema
+          .input("ClavePreceptor", sql.VarChar(10), 'SISTEMA') 
           .input("IdNivel", sql.Int, 1) // 1 = Leve
           .input("Fecha", sql.Date, fechaReporte)
           .input("Motivo", sql.VarChar(255), motivoAmonestacion)
           .query(`
-            INSERT INTO Amonestaciones (MatriculaEstudiante, ClavePreceptor, IdNivel, Fecha, Motivo) 
+            INSERT INTO dormi.Amonestaciones (MatriculaEstudiante, ClavePreceptor, IdNivel, Fecha, Motivo) 
             VALUES (@Matricula, @ClavePreceptor, @IdNivel, @Fecha, @Motivo)
           `);
       }
@@ -206,7 +214,7 @@ router.post("/reportar-faltantes", async (req, res) => {
     res.json({ success: true, message: `Se generaron reportes para ${listaMatriculas.length} estudiantes.` });
 
   } catch (error) {
-    await transaction.rollback();
+    if (transaction) await transaction.rollback(); // Rollback seguro
     console.error("Error al reportar:", error);
     res.status(500).json({ success: false, message: "Error al generar reportes", error: error.message });
   }

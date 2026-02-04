@@ -21,19 +21,21 @@ router.post('/cerrar-semestre', async (req, res) => {
 
         try {
             // 1. Cerrar el semestre actual (El que tiene Activo = 1)
+            // Se actualizó a 'dormi.Semestres'
             await transaction.request()
-                .query("UPDATE Semestres SET Activo = 0, FechaFin = GETDATE() WHERE Activo = 1");
+                .query("UPDATE dormi.Semestres SET Activo = 0, FechaFin = GETDATE() WHERE Activo = 1");
 
             // 2. Crear el NUEVO semestre
+            // Se actualizó a 'dormi.Semestres'
             await transaction.request()
                 .input('Nombre', sql.VarChar, nombreNuevoSemestre)
-                .query("INSERT INTO Semestres (Nombre, FechaInicio, Activo) VALUES (@Nombre, GETDATE(), 1)");
+                .query("INSERT INTO dormi.Semestres (Nombre, FechaInicio, Activo) VALUES (@Nombre, GETDATE(), 1)");
 
             // 3. VACIAR LOS CUARTOS (Aquí ocurre la magia)
-            // Ponemos en NULL los campos de ubicación de TODOS los estudiantes
+            // Ponemos en NULL los campos de ubicación de TODOS los estudiantes en 'dormi.Estudiantes'
             await transaction.request()
                 .query(`
-                    UPDATE Estudiantes 
+                    UPDATE dormi.Estudiantes 
                     SET IdCuarto = NULL, IdPasillo = NULL, IdDormitorio = NULL 
                 `);
 

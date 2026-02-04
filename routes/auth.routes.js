@@ -6,7 +6,9 @@ import bcrypt from 'bcryptjs';
 
 const router = Router();
 
-// 1. LOGIN (ARREGLADO Y SIN COMENTARIOS)
+// ==========================================
+// 1. LOGIN
+// ==========================================
 router.post('/login', async (req, res) => {
   const { usuarioID, password } = req.body;
   console.log(`[LOGIN] Usuario: ${usuarioID}`);
@@ -15,6 +17,7 @@ router.post('/login', async (req, res) => {
     const pool = await getConnection();
     
     // PROTECCIÓN CRÍTICA: ISNULL convierte los nulos del cierre de semestre en 0
+    // SE ACTUALIZÓ PARA USAR EL ESQUEMA 'dormi'
     const result = await pool.request()
       .input('UsuarioID', sql.VarChar(20), usuarioID)
       .query(`
@@ -28,9 +31,9 @@ router.post('/login', async (req, res) => {
           ISNULL(E.IdCuarto, 0) AS IdCuarto,
           ISNULL(E.IdPasillo, 0) AS IdPasillo,
           ISNULL(COALESCE(E.IdDormitorio, P.IdDormitorio), 0) AS IdDormitorio
-        FROM Usuarios U
-        LEFT JOIN Estudiantes E ON U.UsuarioID = E.Matricula 
-        LEFT JOIN Preceptores P ON U.UsuarioID = P.ClaveEmpleado
+        FROM dormi.Usuarios U
+        LEFT JOIN dormi.Estudiantes E ON U.UsuarioID = E.Matricula 
+        LEFT JOIN dormi.Preceptores P ON U.UsuarioID = P.ClaveEmpleado
         WHERE U.UsuarioID = @UsuarioID
       `);
     
@@ -54,7 +57,9 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// 2. CHECK ACCESS
+// ==========================================
+// 2. CHECK ACCESS (Valida con API Externa)
+// ==========================================
 router.post('/check-access', async (req, res) => {
   const { usuarioID, idRol } = req.body;
   const apiUrl = `https://ulv-api.apps.isdapps.uk/api/datos/`;
@@ -89,12 +94,19 @@ router.post('/check-access', async (req, res) => {
   }
 });
 
-// 3. REGISTRO
+// ==========================================
+// 3. REGISTRO DE USUARIOS
+// ==========================================
 router.post('/register', async (req, res) => {
   const { usuarioID, password, idRol, nombreCompleto, carrera, correo } = req.body;
   try {
     const pool = await getConnection();
-    const checkUser = await pool.request().input('UsuarioID', sql.VarChar(20), usuarioID).query('SELECT UsuarioID FROM Usuarios WHERE UsuarioID = @UsuarioID');
+    
+    // Verificar si ya existe en esquema dormi
+    const checkUser = await pool.request()
+      .input('UsuarioID', sql.VarChar(20), usuarioID)
+      .query('SELECT UsuarioID FROM dormi.Usuarios WHERE UsuarioID = @UsuarioID');
+    
     if (checkUser.recordset.length > 0) return res.status(400).json({ success: false, message: 'Usuario ya registrado.' });
 
     const salt = await bcrypt.genSalt(10);
@@ -103,26 +115,51 @@ router.post('/register', async (req, res) => {
     await transaction.begin();
 
     try {
+      // 1. Insertar en tabla Usuarios (Base)
       await transaction.request()
         .input('UsuarioID', sql.VarChar(20), usuarioID)
         .input('Password', sql.VarChar(255), hashedPassword)
         .input('IdRol', sql.Int, idRol)
-        .query(`INSERT INTO Usuarios (UsuarioID, Password, IdRol, FechaRegistro) VALUES (@UsuarioID, @Password, @IdRol, GETDATE())`);
+        .query(`INSERT INTO dormi.Usuarios (UsuarioID, Password, IdRol, FechaRegistro) VALUES (@UsuarioID, @Password, @IdRol, GETDATE())`);
 
-      if (idRol === 3) {
-        await transaction.request().input('Matricula', sql.VarChar(20), usuarioID).input('Nombre', sql.VarChar(150), nombreCompleto).input('Carrera', sql.VarChar(100), carrera).input('Correo', sql.VarChar(100), correo)
-        .query(`IF NOT EXISTS (SELECT * FROM Estudiantes WHERE Matricula = @Matricula) INSERT INTO Estudiantes (Matricula, NombreCompleto, Carrera, Correo) VALUES (@Matricula, @Nombre, @Carrera, @Correo)`);
-      } else if (idRol === 1) {
-         await transaction.request().input('Clave', sql.VarChar(20), usuarioID).input('Nombre', sql.VarChar(150), nombreCompleto).input('Correo', sql.VarChar(100), correo)
-         .query(`IF NOT EXISTS (SELECT * FROM Preceptores WHERE ClaveEmpleado = @Clave) INSERT INTO Preceptores (ClaveEmpleado, NombreCompleto, Correo) VALUES (@Clave, @Nombre, @Correo)`);
+      // 2. Insertar en tabla específica según Rol
+      if (idRol === 3) { // Estudiante
+        await transaction.request()
+          .input('Matricula', sql.VarChar(20), usuarioID)
+          .input('Nombre', sql.VarChar(150), nombreCompleto)
+          .input('Carrera', sql.VarChar(100), carrera)
+          .input('Correo', sql.VarChar(100), correo)
+          .query(`
+            IF NOT EXISTS (SELECT * FROM dormi.Estudiantes WHERE Matricula = @Matricula) 
+            INSERT INTO dormi.Estudiantes (Matricula, NombreCompleto, Carrera, Correo) 
+            VALUES (@Matricula, @Nombre, @Carrera, @Correo)
+          `);
+      } else if (idRol === 1) { // Preceptor
+         await transaction.request()
+           .input('Clave', sql.VarChar(20), usuarioID)
+           .input('Nombre', sql.VarChar(150), nombreCompleto)
+           .input('Correo', sql.VarChar(100), correo)
+           .query(`
+             IF NOT EXISTS (SELECT * FROM dormi.Preceptores WHERE ClaveEmpleado = @Clave) 
+             INSERT INTO dormi.Preceptores (ClaveEmpleado, NombreCompleto, Correo) 
+             VALUES (@Clave, @Nombre, @Correo)
+           `);
       }
+      
       await transaction.commit();
       res.json({ success: true, message: 'Registro exitoso.' });
-    } catch (err) { await transaction.rollback(); throw err; }
-  } catch (error) { res.status(500).json({ success: false, message: 'Error interno', error: error.message }); }
+    } catch (err) { 
+        await transaction.rollback(); 
+        throw err; 
+    }
+  } catch (error) { 
+      res.status(500).json({ success: false, message: 'Error interno', error: error.message }); 
+  }
 });
 
+// ==========================================
 // 4. RESET PASSWORD (Depurado)
+// ==========================================
 router.post('/reset-password', async (req, res) => {
   const { correo, nuevaPassword } = req.body;
   console.log(`[RESET PASS] Correo: ${correo}`);
@@ -137,9 +174,9 @@ router.post('/reset-password', async (req, res) => {
     const userSearch = await pool.request()
       .input('Correo', sql.VarChar(100), correo)
       .query(`
-        SELECT Matricula AS UsuarioID FROM Estudiantes WHERE LTRIM(RTRIM(Correo)) = @Correo
+        SELECT Matricula AS UsuarioID FROM dormi.Estudiantes WHERE LTRIM(RTRIM(Correo)) = @Correo
         UNION
-        SELECT ClaveEmpleado AS UsuarioID FROM Preceptores WHERE LTRIM(RTRIM(Correo)) = @Correo
+        SELECT ClaveEmpleado AS UsuarioID FROM dormi.Preceptores WHERE LTRIM(RTRIM(Correo)) = @Correo
       `);
 
     if (userSearch.recordset.length === 0) {
@@ -154,7 +191,7 @@ router.post('/reset-password', async (req, res) => {
     await pool.request()
       .input('UsuarioID', sql.VarChar(20), usuarioID)
       .input('Password', sql.VarChar(255), hashedPassword)
-      .query(`UPDATE Usuarios SET Password = @Password WHERE UsuarioID = @UsuarioID`);
+      .query(`UPDATE dormi.Usuarios SET Password = @Password WHERE UsuarioID = @UsuarioID`);
 
     console.log(`[RESET PASS] Contraseña actualizada para: ${usuarioID}`);
     res.json({ success: true, message: 'Contraseña actualizada.' });
@@ -165,13 +202,17 @@ router.post('/reset-password', async (req, res) => {
   }
 });
 
-// 5. UPDATE TOKEN
+// ==========================================
+// 5. UPDATE TOKEN (FCM)
+// ==========================================
 router.post('/update-token', async (req, res) => {
     const { usuarioID, token } = req.body;
     try {
         const pool = await getConnection();
-        await pool.request().input('UsuarioID', sql.VarChar, usuarioID).input('Token', sql.VarChar, token)
-            .query('UPDATE Usuarios SET FCMToken = @Token WHERE UsuarioID = @UsuarioID');
+        await pool.request()
+            .input('UsuarioID', sql.VarChar, usuarioID)
+            .input('Token', sql.VarChar, token)
+            .query('UPDATE dormi.Usuarios SET FCMToken = @Token WHERE UsuarioID = @UsuarioID');
         res.json({ success: true });
     } catch (e) { res.status(500).send('Error'); }
 });

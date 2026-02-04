@@ -4,7 +4,9 @@ import sql from 'mssql';
 
 const router = Router();
 
-
+// ==========================================
+// 1. OBTENER LISTA DE MONITORES
+// ==========================================
 router.get('/monitores', async (req, res) => {
   console.log('[API Usuarios] GET /monitores');
   try {
@@ -14,8 +16,8 @@ router.get('/monitores', async (req, res) => {
         SELECT 
           U.UsuarioID, -- Matricula del monitor
           E.NombreCompleto
-        FROM Usuarios U
-        INNER JOIN Estudiantes E ON U.UsuarioID = E.Matricula
+        FROM dormi.Usuarios U
+        INNER JOIN dormi.Estudiantes E ON U.UsuarioID = E.Matricula
         WHERE U.IdRol = 2 -- IdRol 2 = Monitor
         ORDER BY E.NombreCompleto ASC; 
       `);
@@ -28,7 +30,9 @@ router.get('/monitores', async (req, res) => {
   }
 });
 
-
+// ==========================================
+// 2. CAMBIAR ROL (Promover a Monitor / Degradar a Estudiante)
+// ==========================================
 router.put('/:usuarioID/rol', async (req, res) => {
   const { usuarioID } = req.params;
   const { nuevoRol } = req.body; 
@@ -39,16 +43,16 @@ router.put('/:usuarioID/rol', async (req, res) => {
     return res.status(400).json({ success: false, message: 'El nuevoRol es requerido y debe ser 2 (Monitor) o 3 (Estudiante).' });
   }
   if (!usuarioID) {
-     return res.status(400).json({ success: false, message: 'Falta el usuarioID en la URL.' });
+      return res.status(400).json({ success: false, message: 'Falta el usuarioID en la URL.' });
   }
-
 
   try {
     const pool = await getConnection();
 
+    // Verificar usuario en esquema dormi
     const userCheck = await pool.request()
         .input('UsuarioID', sql.VarChar(10), usuarioID)
-        .query('SELECT IdRol FROM Usuarios WHERE UsuarioID = @UsuarioID');
+        .query('SELECT IdRol FROM dormi.Usuarios WHERE UsuarioID = @UsuarioID');
 
     if (userCheck.recordset.length === 0) {
         return res.status(404).json({ success: false, message: 'El usuario especificado no existe.' });
@@ -59,21 +63,23 @@ router.put('/:usuarioID/rol', async (req, res) => {
          return res.status(400).json({ success: false, message: `El usuario ya tiene el rol de ${rolNombre}.` });
     }
 
+    // Actualizar Rol en dormi.Usuarios
     const result = await pool.request()
       .input('UsuarioID', sql.VarChar(10), usuarioID)
       .input('NuevoRol', sql.Int, nuevoRol)
       .query(`
-        UPDATE Usuarios
+        UPDATE dormi.Usuarios
         SET IdRol = @NuevoRol
         WHERE UsuarioID = @UsuarioID;
       `);
 
     if (result.rowsAffected[0] > 0) {
+       // Si se degrada a estudiante (Rol 3), limpiamos asignaciones especiales de monitor si las tuviera
        if (nuevoRol === 3) {
            await pool.request()
              .input('UsuarioID', sql.VarChar(10), usuarioID)
              .query(`
-                UPDATE Estudiantes 
+                UPDATE dormi.Estudiantes 
                 SET IdPasillo = NULL, IdDormitorio = NULL 
                 WHERE Matricula = @UsuarioID;
              `);
@@ -90,6 +96,5 @@ router.put('/:usuarioID/rol', async (req, res) => {
     res.status(500).json({ success: false, message: 'Error en el servidor al actualizar el rol.', error: error.message });
   }
 });
-
 
 export default router;
