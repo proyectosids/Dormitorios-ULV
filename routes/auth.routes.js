@@ -6,9 +6,7 @@ import bcrypt from 'bcryptjs';
 
 const router = Router();
 
-// ==========================================
-// 1. LOGIN
-// ==========================================
+// 1. LOGIN (ARREGLADO CON ESQUEMA DORMI)
 router.post('/login', async (req, res) => {
   const { usuarioID, password } = req.body;
   console.log(`[LOGIN] Usuario: ${usuarioID}`);
@@ -16,8 +14,6 @@ router.post('/login', async (req, res) => {
   try {
     const pool = await getConnection();
     
-    // PROTECCIÓN CRÍTICA: ISNULL convierte los nulos del cierre de semestre en 0
-    // SE ACTUALIZÓ PARA USAR EL ESQUEMA 'dormi'
     const result = await pool.request()
       .input('UsuarioID', sql.VarChar(20), usuarioID)
       .query(`
@@ -57,9 +53,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// ==========================================
-// 2. CHECK ACCESS (Valida con API Externa)
-// ==========================================
+// 2. CHECK ACCESS (LÓGICA DE API EXTERNA SE MANTIENE)
 router.post('/check-access', async (req, res) => {
   const { usuarioID, idRol } = req.body;
   const apiUrl = `https://ulv-api.apps.isdapps.uk/api/datos/`;
@@ -94,18 +88,14 @@ router.post('/check-access', async (req, res) => {
   }
 });
 
-// ==========================================
-// 3. REGISTRO DE USUARIOS
-// ==========================================
+// 3. REGISTRO (CON ESQUEMA DORMI Y TRANSACCIONES)
 router.post('/register', async (req, res) => {
   const { usuarioID, password, idRol, nombreCompleto, carrera, correo } = req.body;
   try {
     const pool = await getConnection();
-    
-    // Verificar si ya existe en esquema dormi
     const checkUser = await pool.request()
-      .input('UsuarioID', sql.VarChar(20), usuarioID)
-      .query('SELECT UsuarioID FROM dormi.Usuarios WHERE UsuarioID = @UsuarioID');
+        .input('UsuarioID', sql.VarChar(20), usuarioID)
+        .query('SELECT UsuarioID FROM dormi.Usuarios WHERE UsuarioID = @UsuarioID');
     
     if (checkUser.recordset.length > 0) return res.status(400).json({ success: false, message: 'Usuario ya registrado.' });
 
@@ -115,51 +105,33 @@ router.post('/register', async (req, res) => {
     await transaction.begin();
 
     try {
-      // 1. Insertar en tabla Usuarios (Base)
       await transaction.request()
         .input('UsuarioID', sql.VarChar(20), usuarioID)
         .input('Password', sql.VarChar(255), hashedPassword)
         .input('IdRol', sql.Int, idRol)
         .query(`INSERT INTO dormi.Usuarios (UsuarioID, Password, IdRol, FechaRegistro) VALUES (@UsuarioID, @Password, @IdRol, GETDATE())`);
 
-      // 2. Insertar en tabla específica según Rol
-      if (idRol === 3) { // Estudiante
+      if (idRol === 3) {
         await transaction.request()
-          .input('Matricula', sql.VarChar(20), usuarioID)
-          .input('Nombre', sql.VarChar(150), nombreCompleto)
-          .input('Carrera', sql.VarChar(100), carrera)
-          .input('Correo', sql.VarChar(100), correo)
-          .query(`
-            IF NOT EXISTS (SELECT * FROM dormi.Estudiantes WHERE Matricula = @Matricula) 
-            INSERT INTO dormi.Estudiantes (Matricula, NombreCompleto, Carrera, Correo) 
-            VALUES (@Matricula, @Nombre, @Carrera, @Correo)
-          `);
-      } else if (idRol === 1) { // Preceptor
+            .input('Matricula', sql.VarChar(20), usuarioID)
+            .input('Nombre', sql.VarChar(150), nombreCompleto)
+            .input('Carrera', sql.VarChar(100), carrera)
+            .input('Correo', sql.VarChar(100), correo)
+            .query(`IF NOT EXISTS (SELECT * FROM dormi.Estudiantes WHERE Matricula = @Matricula) INSERT INTO dormi.Estudiantes (Matricula, NombreCompleto, Carrera, Correo) VALUES (@Matricula, @Nombre, @Carrera, @Correo)`);
+      } else if (idRol === 1) {
          await transaction.request()
-           .input('Clave', sql.VarChar(20), usuarioID)
-           .input('Nombre', sql.VarChar(150), nombreCompleto)
-           .input('Correo', sql.VarChar(100), correo)
-           .query(`
-             IF NOT EXISTS (SELECT * FROM dormi.Preceptores WHERE ClaveEmpleado = @Clave) 
-             INSERT INTO dormi.Preceptores (ClaveEmpleado, NombreCompleto, Correo) 
-             VALUES (@Clave, @Nombre, @Correo)
-           `);
+            .input('Clave', sql.VarChar(20), usuarioID)
+            .input('Nombre', sql.VarChar(150), nombreCompleto)
+            .input('Correo', sql.VarChar(100), correo)
+            .query(`IF NOT EXISTS (SELECT * FROM dormi.Preceptores WHERE ClaveEmpleado = @Clave) INSERT INTO dormi.Preceptores (ClaveEmpleado, NombreCompleto, Correo) VALUES (@Clave, @Nombre, @Correo)`);
       }
-      
       await transaction.commit();
       res.json({ success: true, message: 'Registro exitoso.' });
-    } catch (err) { 
-        await transaction.rollback(); 
-        throw err; 
-    }
-  } catch (error) { 
-      res.status(500).json({ success: false, message: 'Error interno', error: error.message }); 
-  }
+    } catch (err) { await transaction.rollback(); throw err; }
+  } catch (error) { res.status(500).json({ success: false, message: 'Error interno', error: error.message }); }
 });
 
-// ==========================================
-// 4. RESET PASSWORD (Depurado)
-// ==========================================
+// 4. RESET PASSWORD (CON ESQUEMA DORMI)
 router.post('/reset-password', async (req, res) => {
   const { correo, nuevaPassword } = req.body;
   console.log(`[RESET PASS] Correo: ${correo}`);
@@ -170,7 +142,6 @@ router.post('/reset-password', async (req, res) => {
 
   try {
     const pool = await getConnection();
-    // Buscamos usuario limpiando espacios en blanco del correo
     const userSearch = await pool.request()
       .input('Correo', sql.VarChar(100), correo)
       .query(`
@@ -180,7 +151,6 @@ router.post('/reset-password', async (req, res) => {
       `);
 
     if (userSearch.recordset.length === 0) {
-      console.log('[RESET PASS] Correo no encontrado');
       return res.status(404).json({ success: false, message: 'Correo no registrado.' });
     }
 
@@ -193,7 +163,6 @@ router.post('/reset-password', async (req, res) => {
       .input('Password', sql.VarChar(255), hashedPassword)
       .query(`UPDATE dormi.Usuarios SET Password = @Password WHERE UsuarioID = @UsuarioID`);
 
-    console.log(`[RESET PASS] Contraseña actualizada para: ${usuarioID}`);
     res.json({ success: true, message: 'Contraseña actualizada.' });
 
   } catch (error) {
@@ -202,19 +171,30 @@ router.post('/reset-password', async (req, res) => {
   }
 });
 
-// ==========================================
-// 5. UPDATE TOKEN (FCM)
-// ==========================================
+// 5. UPDATE TOKEN (CON ESQUEMA DORMI)
 router.post('/update-token', async (req, res) => {
-    const { usuarioID, token } = req.body;
+    const matricula = req.body.matricula || req.body.usuarioID;
+    const fcmToken = req.body.fcmToken || req.body.token;
+
+    if (!matricula || !fcmToken) {
+        return res.status(400).json({ success: false, message: 'Faltan datos (matricula o token)' });
+    }
+
     try {
         const pool = await getConnection();
+
         await pool.request()
-            .input('UsuarioID', sql.VarChar, usuarioID)
-            .input('Token', sql.VarChar, token)
+            .input('UsuarioID', sql.VarChar, matricula)
+            .input('Token', sql.VarChar, fcmToken)
             .query('UPDATE dormi.Usuarios SET FCMToken = @Token WHERE UsuarioID = @UsuarioID');
-        res.json({ success: true });
-    } catch (e) { res.status(500).send('Error'); }
+        
+        console.log(`✅ Token guardado en dormi.Usuarios para ${matricula}`);
+        res.json({ success: true, message: 'Token actualizado correctamente' });
+
+    } catch (error) {
+        console.error('❌ Error guardando token:', error);
+        res.status(500).json({ success: false, message: 'Error interno del servidor' });
+    }
 });
 
 export default router;

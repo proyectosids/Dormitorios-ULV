@@ -4,9 +4,7 @@ import sql from 'mssql';
 
 const router = Router();
 
-// ==========================================
-// 1. OBTENER TIPOS DE CULTO (Catálogo)
-// ==========================================
+// Obtener los tipos de culto del catálogo en producción
 router.get('/tipos', async (req, res) => {
   try {
     const pool = await getConnection();
@@ -21,7 +19,7 @@ router.get('/tipos', async (req, res) => {
     res.json({ success: true, data: result.recordset });
 
   } catch (error) {
-    console.error('Error en GET /api/cultos/tipos:', error);
+    console.error('Error en GET /api/cultos/tipos (dormi):', error);
     res.status(500).json({ 
       success: false, 
       message: 'Error al obtener los tipos de culto disponibles.', 

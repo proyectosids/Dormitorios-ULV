@@ -1,11 +1,10 @@
 import { Router } from 'express';
 import { getConnection } from '../db.js';
 import sql from 'mssql';
+import { enviarNotificacion } from '../services/notification.service.js';
 
 const router = Router();
 
-// Subconsulta reutilizable para obtener el nombre de quien reportó
-// Ajustada para usar el esquema 'dormi'
 const getReportanteNombreQuery = `
   COALESCE(
     (SELECT NombreCompleto FROM dormi.Estudiantes WHERE Matricula = R.ReportadoPor AND R.TipoUsuarioReportante = 'Monitor'),
@@ -14,12 +13,9 @@ const getReportanteNombreQuery = `
   ) AS ReportadoPorNombre
 `;
 
-// ==========================================
-// 1. GET Reportes de un estudiante
-// ==========================================
+// 1. OBTENER REPORTES POR ESTUDIANTE
 router.get('/estudiante/:matricula', async (req, res) => {
   const { matricula } = req.params;
-  console.log(`[API Reportes] GET /estudiante/${matricula}`);
   try {
     const pool = await getConnection();
     const result = await pool.request()
@@ -30,6 +26,7 @@ router.get('/estudiante/:matricula', async (req, res) => {
           R.Motivo,
           R.FechaReporte,
           R.Estado,
+          R.FirmaEstudiante,
           E.NombreCompleto AS NombreEstudianteReportado, 
           ${getReportanteNombreQuery} 
         FROM dormi.Reportes R
@@ -37,31 +34,23 @@ router.get('/estudiante/:matricula', async (req, res) => {
         WHERE R.MatriculaReportado = @Matricula
         ORDER BY R.FechaReporte DESC
       `);
-    console.log(`[API Reportes] GET /estudiante/${matricula} - Encontrados: ${result.recordset.length}`);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
-    console.error(`[API Reportes] Error en GET /estudiante/${matricula}:`, error);
-    res.status(500).json({ success: false, message: 'Error al obtener reportes del estudiante', error: error.message });
+    res.status(500).json({ success: false, message: 'Error al obtener reportes', error: error.message });
   }
 });
 
-// ==========================================
-// 2. CREAR REPORTE (Con Lógica de Acumulación)
-// ==========================================
+// 2. CREAR REPORTE (CON NOTIFICACIÓN Y ACUMULACIÓN)
 router.post('/crear', async (req, res) => {
   const { matriculaReportado, reportadoPor, tipoUsuarioReportante, motivo, idTipoReporte } = req.body;
-  
-  console.log(`[API Reportes] POST /crear - Alumno: ${matriculaReportado}, Tipo: ${idTipoReporte}`);
 
   if (!matriculaReportado || !reportadoPor || !motivo || !idTipoReporte) {
-    return res.status(400).json({ success: false, message: 'Faltan datos (matricula, reportador, motivo, tipo).' });
+    return res.status(400).json({ success: false, message: 'Faltan datos requeridos.' });
   }
 
   try {
     const pool = await getConnection();
     const transaction = new sql.Transaction(pool);
-
-    // Iniciamos transacción (Todo o nada)
     await transaction.begin();
 
     try {
@@ -69,7 +58,7 @@ router.post('/crear', async (req, res) => {
       const fechaAprobacion = tipoUsuarioReportante === 'Preceptor' ? new Date() : null;
       const preceptorAprobador = tipoUsuarioReportante === 'Preceptor' ? reportadoPor : null;
 
-      // 1. INSERTAR EL REPORTE
+      // Insertar Reporte en dormi.Reportes
       await transaction.request()
         .input('MatriculaReportado', sql.VarChar(10), matriculaReportado)
         .input('ReportadoPor', sql.VarChar(10), reportadoPor)
@@ -80,94 +69,73 @@ router.post('/crear', async (req, res) => {
         .input('FechaAprobacion', sql.DateTime, fechaAprobacion)
         .input('IdTipoReporte', sql.Int, idTipoReporte)
         .query(`
-          INSERT INTO dormi.Reportes
-            (MatriculaReportado, ReportadoPor, TipoUsuarioReportante, Motivo, Estado, ClavePreceptorAprobador, FechaAprobacion, IdTipoReporte)
-          VALUES
-            (@MatriculaReportado, @ReportadoPor, @TipoUsuarioReportante, @Motivo, @Estado, @ClavePreceptorAprobador, @FechaAprobacion, @IdTipoReporte)
+          INSERT INTO dormi.Reportes (MatriculaReportado, ReportadoPor, TipoUsuarioReportante, Motivo, Estado, ClavePreceptorAprobador, FechaAprobacion, IdTipoReporte)
+          VALUES (@MatriculaReportado, @ReportadoPor, @TipoUsuarioReportante, @Motivo, @Estado, @ClavePreceptorAprobador, @FechaAprobacion, @IdTipoReporte)
         `);
 
-      // 2. VALIDACIÓN DE ACUMULACIÓN (3 Reportes = Amonestación)
-      // Contamos reportes del MISMO TIPO en el MES ACTUAL
+      // Lógica de acumulación en el mes actual
       const countResult = await transaction.request()
         .input('Matricula', sql.VarChar(10), matriculaReportado)
         .input('IdTipoReporte', sql.Int, idTipoReporte)
         .query(`
-          SELECT COUNT(*) as Total 
-          FROM dormi.Reportes 
-          WHERE MatriculaReportado = @Matricula
-          AND IdTipoReporte = @IdTipoReporte
-          AND MONTH(FechaReporte) = MONTH(GETDATE()) -- Mismo Mes
-          AND YEAR(FechaReporte) = YEAR(GETDATE())   -- Mismo Año
+          SELECT COUNT(*) as Total FROM dormi.Reportes 
+          WHERE MatriculaReportado = @Matricula AND IdTipoReporte = @IdTipoReporte
+          AND MONTH(FechaReporte) = MONTH(GETDATE()) AND YEAR(FechaReporte) = YEAR(GETDATE())
         `);
 
       const totalDelMes = countResult.recordset[0].Total;
-      let mensajeExtra = '';
+      let amonestacionGenerada = false;
 
-      // Si es múltiplo de 3 (3, 6, 9...)
       if (totalDelMes > 0 && totalDelMes % 3 === 0) {
-        
-        // Obtenemos nombre del mes y tipo para el mensaje
         const mesActual = new Date().toLocaleString('es-ES', { month: 'long' }).toUpperCase();
-        
-        // Mapeo manual rápido para el mensaje
-        let nombreTipo = 'GENERAL';
-        if(idTipoReporte == 1) nombreTipo = 'LIMPIEZA';
-        if(idTipoReporte == 2) nombreTipo = 'DISCIPLINA';
-        if(idTipoReporte == 3) nombreTipo = 'DAÑOS';
-
-        console.log(`[Sistema] Alumno ${matriculaReportado} acumuló 3 reportes de ${nombreTipo}. Generando amonestación...`);
-
-        // 3. GENERAR AMONESTACIÓN AUTOMÁTICA
-        // Asignamos Nivel 1 (Leve) por defecto.
-        // OJO: 'SISTEMA' debe existir en dormi.Preceptores
         await transaction.request()
           .input('MatriculaEstudiante', sql.VarChar(10), matriculaReportado)
-          .input('ClavePreceptor', sql.VarChar(10), 'SISTEMA') 
-          .input('IdNivel', sql.Int, 1) // Nivel 1 = Leve
-          .input('Motivo', sql.VarChar(200), `Acumulación de 3 reportes de ${nombreTipo} en ${mesActual} (Automática)`)
+          .input('ClavePreceptor', sql.VarChar(10), 'SISTEMA')
+          .input('IdNivel', sql.Int, 1) // Nivel leve por defecto
+          .input('Motivo', sql.VarChar(200), `Acumulación de 3 reportes en ${mesActual} (Automática)`)
           .input('Fecha', sql.Date, new Date())
           .query(`
             INSERT INTO dormi.Amonestaciones (MatriculaEstudiante, ClavePreceptor, IdNivel, Motivo, Fecha)
             VALUES (@MatriculaEstudiante, @ClavePreceptor, @IdNivel, @Motivo, @Fecha)
           `);
-          
-        mensajeExtra = ' ¡Se generó una amonestación automática!';
+        amonestacionGenerada = true;
       }
 
       await transaction.commit();
-      
-      res.status(201).json({ 
-        success: true, 
-        message: `Reporte creado correctamente.${mensajeExtra}` 
-      });
+
+      // --- NOTIFICACIONES ---
+      enviarNotificacion(
+        matriculaReportado,
+        "📋 Nuevo Reporte",
+        `Se ha registrado un nuevo reporte: ${motivo}`
+      );
+
+      if (amonestacionGenerada) {
+        enviarNotificacion(
+          matriculaReportado,
+          "⚠️ Amonestación Automática",
+          "Has acumulado 3 reportes en el mes. Se ha generado una amonestación."
+        );
+      }
+
+      res.status(201).json({ success: true, message: 'Reporte creado con éxito.' });
 
     } catch (err) {
       await transaction.rollback();
-      console.error('[API Reportes] Error transacción:', err);
-      // Validar errores específicos de SQL
-      if (err.number === 547) {
-         return res.status(400).json({ success: false, message: 'Error de referencia (Matrícula o Tipo no existen).' });
-      }
-      throw err; // Lanzar al catch general
+      throw err;
     }
-
   } catch (error) {
-    console.error('[API Reportes] Error General:', error);
     res.status(500).json({ success: false, message: 'Error en el servidor', error: error.message });
   }
 });
 
-// ==========================================
-// 3. VER TODOS LOS REPORTES (Paginación + Buscador)
-// ==========================================
+// 3. VER TODOS LOS REPORTES (PAGINADOS)
 router.get('/', async (req, res) => {
-  console.log(`[API Reportes] GET / (Todos)`);
   const { page = 1, limit = 20, search } = req.query; 
   const offset = (parseInt(page) - 1) * parseInt(limit);
 
   try {
     const pool = await getConnection();
-    
     let whereClause = '';
     const request = pool.request(); 
 
@@ -177,113 +145,89 @@ router.get('/', async (req, res) => {
     }
 
     const query = `
-      SELECT
-        R.IdReporte,
-        R.MatriculaReportado,
-        E.NombreCompleto AS NombreEstudiante,
-        R.ReportadoPor,
-        R.TipoUsuarioReportante,
-        R.Motivo,
-        R.FechaReporte,
-        R.Estado,
+      SELECT R.IdReporte, R.MatriculaReportado, E.NombreCompleto AS NombreEstudiante,
+        R.ReportadoPor, R.TipoUsuarioReportante, R.Motivo, R.FechaReporte, R.Estado, R.FirmaEstudiante,
         ${getReportanteNombreQuery}
       FROM dormi.Reportes R
       INNER JOIN dormi.Estudiantes E ON R.MatriculaReportado = E.Matricula
-      ${whereClause} 
+      ${whereClause}
       ORDER BY R.FechaReporte DESC
-      OFFSET ${offset} ROWS FETCH NEXT ${parseInt(limit)} ROWS ONLY; 
-    `;
-
-     const countQuery = `
-      SELECT COUNT(*) as total
-      FROM dormi.Reportes R
-      INNER JOIN dormi.Estudiantes E ON R.MatriculaReportado = E.Matricula
-      ${whereClause}; 
+      OFFSET ${offset} ROWS FETCH NEXT ${parseInt(limit)} ROWS ONLY;
     `;
 
     const result = await request.query(query); 
-    const totalResult = await request.query(countQuery); 
+    const totalResult = await request.query(`SELECT COUNT(*) as total FROM dormi.Reportes R INNER JOIN dormi.Estudiantes E ON R.MatriculaReportado = E.Matricula ${whereClause}`); 
 
-    const totalReportes = totalResult.recordset[0].total;
-
-    console.log(`[API Reportes] GET / (Todos) - Encontrados: ${result.recordset.length} (Total: ${totalReportes})`);
     res.json({ 
       success: true, 
       data: result.recordset,
-      total: totalReportes, 
+      total: totalResult.recordset[0].total, 
       page: parseInt(page),
       limit: parseInt(limit)
     });
-
   } catch (error) {
-    console.error('[API Reportes] Error en GET / (Todos):', error);
-    res.status(500).json({ success: false, message: 'Error al obtener todos los reportes', error: error.message });
+    res.status(500).json({ success: false, message: 'Error al obtener reportes', error: error.message });
   }
 });
 
-// ==========================================
-// 4. APROBAR REPORTE
-// ==========================================
+// 4. APROBAR REPORTE (CON NOTIFICACIÓN)
 router.put('/:idReporte/aprobar', async (req, res) =>{
   const { idReporte } = req.params;
   const { preceptorId } = req.body; 
   
-  if(!preceptorId) {
-    return res.status(400).json({ success: false, message: 'Falta el ID del preceptor que aprueba.'});
-  }
+  if(!preceptorId) return res.status(400).json({ success: false, message: 'Falta ID del preceptor.'});
 
-    console.log(`[API Reportes] PUT /${idReporte}/aprobar por ${preceptorId}`);
-    try {
+  try {
     const pool = await getConnection();
+    
+    // Obtener matrícula antes de actualizar
+    const infoResult = await pool.request()
+      .input('Id', sql.Int, idReporte)
+      .query("SELECT MatriculaReportado, Motivo FROM dormi.Reportes WHERE IdReporte = @Id");
+
     const result = await pool.request()
       .input('IdReporte', sql.Int, idReporte)
       .input('PreceptorId', sql.VarChar(10), preceptorId)
       .input('FechaAprobacion', sql.DateTime, new Date())
       .query(`
-        UPDATE dormi.Reportes
-        SET 
-          Estado = 'Aprobado',
-          ClavePreceptorAprobador = @PreceptorId,
-          FechaAprobacion = @FechaAprobacion
-        WHERE IdReporte = @IdReporte AND Estado = 'Pendiente'
+        UPDATE dormi.Reportes SET Estado = 'Aprobado', ClavePreceptorAprobador = @PreceptorId, FechaAprobacion = @FechaAprobacion
+        WHERE IdReporte = @IdReporte AND Estado = 'Pending' OR Estado = 'Pendiente'
       `);
     
     if (result.rowsAffected[0] > 0) {
+      const { MatriculaReportado, Motivo } = infoResult.recordset[0];
+      
+      enviarNotificacion(
+        MatriculaReportado,
+        "✅ Reporte Aprobado",
+        `Tu reporte "${Motivo}" ha sido aprobado. Favor de pasar a firmar.`
+      );
+
       res.json({ success: true, message: 'Reporte aprobado correctamente.' });
     } else {
-      res.status(404).json({ success: false, message: 'El reporte no existe o ya estaba aprobado/rechazado.' });
+      res.status(404).json({ success: false, message: 'No se pudo aprobar el reporte.' });
     }
   } catch (error) {
-    console.error(`[API Reportes] Error en PUT /${idReporte}/aprobar:`, error);
-    res.status(500).json({ success: false, message: 'Error en el servidor al aprobar el reporte.', error: error.message });
+    res.status(500).json({ success: false, message: 'Error en el servidor', error: error.message });
   }
-  });
+});
 
-// ==========================================
 // 5. RECHAZAR REPORTE
-// ==========================================
 router.put('/:idReporte/rechazar', async (req, res) => {
   const { idReporte } = req.params;
-
-  console.log(`[API Reportes] PUT /${idReporte}/rechazar`);
   try {
     const pool = await getConnection();
     const result = await pool.request()
       .input('IdReporte', sql.Int, idReporte)
-      .query(`
-        UPDATE dormi.Reportes
-        SET Estado = 'Rechazado'
-        WHERE IdReporte = @IdReporte AND Estado = 'Pendiente'
-      `);
+      .query("UPDATE dormi.Reportes SET Estado = 'Rechazado' WHERE IdReporte = @IdReporte AND (Estado = 'Pending' OR Estado = 'Pendiente')");
       
     if (result.rowsAffected[0] > 0) {
       res.json({ success: true, message: 'Reporte rechazado correctamente.' });
     } else {
-      res.status(404).json({ success: false, message: 'El reporte no existe o ya estaba aprobado/rechazado.' });
+      res.status(404).json({ success: false, message: 'No se pudo rechazar.' });
     }
   } catch (error) {
-    console.error(`[API Reportes] Error en PUT /${idReporte}/rechazar:`, error);
-    res.status(500).json({ success: false, message: 'Error en el servidor al rechazar el reporte.', error: error.message });
+    res.status(500).json({ success: false, message: 'Error en el servidor', error: error.message });
   }
 });
 

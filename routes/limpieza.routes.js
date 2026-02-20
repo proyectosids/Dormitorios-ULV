@@ -1,12 +1,11 @@
 import { Router } from 'express';
 import { getConnection } from '../db.js';
 import sql from 'mssql';
+import { enviarNotificacion } from '../services/notification.service.js';
 
 const router = Router();
 
-// ==========================================
 // 1. Obtener DETALLE de limpieza
-// ==========================================
 router.get('/detalle/:idCuarto', async (req, res) => {
   const { idCuarto } = req.params;
   try {
@@ -44,14 +43,11 @@ router.get('/detalle/:idCuarto', async (req, res) => {
       data: { ...limpieza.recordset[0], Detalle: detalle.recordset }
     });
   } catch (error) {
-    console.error("Error en /detalle/:idCuarto:", error);
     res.status(500).json({ success: false, message: 'Error al obtener el detalle', error: error.message });
   }
 });
 
-// ==========================================
-// 2. REGISTRAR Limpieza (Transacción)
-// ==========================================
+// 2. REGISTRAR Limpieza (CON NOTIFICACIONES PUSH)
 router.post('/registrar', async (req, res) => {
   const { idCuarto, evaluadoPor, detallesMatutinos, ordenGeneral, disciplina, observaciones } = req.body;
   
@@ -63,12 +59,9 @@ router.post('/registrar', async (req, res) => {
   const transaction = pool.transaction(); 
   try {
     await transaction.begin();
-    
-    // Calcular totales
     const subtotal = detallesMatutinos.reduce((acc, item) => acc + (parseInt(item.calificacion, 10) || 0), 0);
     const totalFinal = subtotal + (parseInt(ordenGeneral, 10) || 0) + (parseInt(disciplina, 10) || 0);
     
-    // Insertar Cabecera
     const limpiezaResult = await new sql.Request(transaction)
       .input('IdCuarto', sql.Int, idCuarto)
       .input('Fecha', sql.DateTime, new Date())
@@ -85,11 +78,7 @@ router.post('/registrar', async (req, res) => {
       
     const idLimpieza = limpiezaResult.recordset[0].IdLimpieza;
     
-    // Insertar Detalles
     for (const detalle of detallesMatutinos) {
-       if (detalle.idCriterio === undefined || detalle.calificacion === undefined) {
-           throw new Error('Cada detalle debe tener idCriterio y calificacion.');
-       }
       await new sql.Request(transaction)
         .input('IdLimpieza', sql.Int, idLimpieza)
         .input('IdCriterio', sql.Int, detalle.idCriterio)
@@ -98,61 +87,65 @@ router.post('/registrar', async (req, res) => {
     }
     
     await transaction.commit();
+
+    // --- NOTIFICACIONES ---
+    try {
+        const resultEstudiantes = await pool.request()
+            .input('IdCuarto', sql.Int, idCuarto)
+            .query("SELECT Matricula FROM dormi.Estudiantes WHERE IdCuarto = @IdCuarto");
+
+        resultEstudiantes.recordset.forEach(estudiante => {
+            enviarNotificacion(
+                estudiante.Matricula,
+                "🏠 Limpieza Calificada",
+                `Tu cuarto ha sido evaluado hoy con un total de ${totalFinal} puntos.`
+            );
+        });
+    } catch (errNotif) {
+        console.error("Error notificaciones limpieza:", errNotif);
+    }
+
     res.status(201).json({ success: true, message: 'Limpieza registrada exitosamente', idLimpieza });
   } catch (error) {
     await transaction.rollback();
-    console.error("Error en POST /registrar:", error);
     res.status(500).json({ success: false, message: 'Error al registrar la limpieza', error: error.message });
   }
 });
 
-// ==========================================
 // 3. Obtener CRITERIOS
-// ==========================================
 router.get('/criterios', async (req, res) => {
   try {
     const pool = await getConnection();
     const result = await pool.request().query(`SELECT IdCriterio, Descripcion FROM dormi.CriteriosLimpieza ORDER BY IdCriterio`);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
-    console.error("Error en GET /criterios:", error);
     res.status(500).json({ success: false, message: 'Error al obtener criterios', error: error.message });
   }
 });
 
-// ==========================================
 // 4. Obtener CUARTOS CON CALIFICACIÓN
-// ==========================================
 router.get('/cuartos-con-calificacion', async (req, res) => {
   try {
     const pool = await getConnection();
     const result = await pool.request().query(`
       WITH UltimaLimpieza AS (
         SELECT 
-          IdCuarto, 
-          TotalFinal, 
+          IdCuarto, TotalFinal, 
           ROW_NUMBER() OVER(PARTITION BY IdCuarto ORDER BY Fecha DESC, IdLimpieza DESC) as rn 
         FROM dormi.Limpieza
       )
-      SELECT 
-        C.IdCuarto,
-        C.NumeroCuarto,
-        C.IdPasillo,
-        UL.TotalFinal AS UltimaCalificacion 
+      SELECT C.IdCuarto, C.NumeroCuarto, C.IdPasillo, UL.TotalFinal AS UltimaCalificacion 
       FROM dormi.Cuartos C
       LEFT JOIN UltimaLimpieza UL ON C.IdCuarto = UL.IdCuarto AND UL.rn = 1 
       ORDER BY C.IdPasillo, C.NumeroCuarto;
     `);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
-    console.error("Error en GET /cuartos-con-calificacion:", error);
-    res.status(500).json({ success: false, message: 'Error al obtener cuartos con calificación', error: error.message });
+    res.status(500).json({ success: false, message: 'Error al obtener cuartos', error: error.message });
   }
 });
 
-// ==========================================
 // 5. HISTORIAL
-// ==========================================
 router.get('/historial/:idCuarto', async (req, res) => {
   const { idCuarto } = req.params;
   try {
@@ -168,22 +161,16 @@ router.get('/historial/:idCuarto', async (req, res) => {
       `);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
-     console.error("Error en GET /historial/:idCuarto:", error);
     res.status(500).json({ success: false, message: 'Error al obtener historial', error: error.message });
   }
 });
 
-// ==========================================
-// 6. ESTADÍSTICAS GENERALES (Con Cortes)
-// ==========================================
+// 6. OBTENER ESTADÍSTICAS
 router.get('/estadisticas/generales', async (req, res) => {
   const { idSemestre } = req.query;
-
   try {
     const pool = await getConnection();
-    
-    // 1. Averiguar Fechas del Semestre
-    let fechaInicioSemestre = '2025-01-01'; // Fallback
+    let fechaInicioSemestre = '2025-01-01'; 
     
     if (idSemestre) {
         const sem = await pool.request().input('Id', sql.Int, idSemestre).query("SELECT FechaInicio FROM dormi.Semestres WHERE IdSemestre = @Id");
@@ -193,66 +180,34 @@ router.get('/estadisticas/generales', async (req, res) => {
         if (sem.recordset.length > 0) fechaInicioSemestre = sem.recordset[0].FechaInicio;
     }
 
-    // 2. Averiguar el ÚLTIMO CORTE MANUAL (Para saber desde dónde contar)
     const cortes = await pool.request()
       .input('FechaSemestre', sql.DateTime, fechaInicioSemestre)
-      .query(`
-        SELECT TOP 2 FechaCorte 
-        FROM dormi.CortesLimpieza 
-        WHERE FechaCorte >= @FechaSemestre 
-        ORDER BY FechaCorte DESC
-      `);
+      .query(`SELECT TOP 2 FechaCorte FROM dormi.CortesLimpieza WHERE FechaCorte >= @FechaSemestre ORDER BY FechaCorte DESC`);
 
-    // Definir rangos
-    let inicioEnCurso = (cortes.recordset.length > 0) 
-        ? cortes.recordset[0].FechaCorte 
-        : fechaInicioSemestre;
-    
-    let inicioPublicado = (cortes.recordset.length > 1) 
-        ? cortes.recordset[1].FechaCorte 
-        : fechaInicioSemestre;
-        
-    let finPublicado = (cortes.recordset.length > 0) 
-        ? cortes.recordset[0].FechaCorte 
-        : new Date();
+    let inicioEnCurso = (cortes.recordset.length > 0) ? cortes.recordset[0].FechaCorte : fechaInicioSemestre;
+    let inicioPublicado = (cortes.recordset.length > 1) ? cortes.recordset[1].FechaCorte : fechaInicioSemestre;
+    let finPublicado = (cortes.recordset.length > 0) ? cortes.recordset[0].FechaCorte : new Date();
 
-    // 3. Query Maestra (Con filtro de Sábados)
     const queryBase = (fechaIni, fechaFin) => `
-      SELECT 
-        ISNULL(P.NombrePasillo, 'Sin Pasillo') AS Pasillo,
-        AVG(CAST(L.TotalFinal AS FLOAT)) AS Promedio
+      SELECT ISNULL(P.Nombre, 'Sin Pasillo') AS Pasillo, AVG(CAST(L.TotalFinal AS FLOAT)) AS Promedio
       FROM dormi.Limpieza L
       INNER JOIN dormi.Cuartos C ON L.IdCuarto = C.IdCuarto
       LEFT JOIN dormi.Pasillos P ON C.IdPasillo = P.IdPasillo
-      WHERE L.Fecha > '${new Date(fechaIni).toISOString()}' 
-        AND L.Fecha <= '${new Date(fechaFin).toISOString()}'
-        -- EXCLUIR SÁBADOS (0=Dom... 6=Sab)
+      WHERE L.Fecha > '${new Date(fechaIni).toISOString()}' AND L.Fecha <= '${new Date(fechaFin).toISOString()}'
         AND ((DATEPART(dw, L.Fecha) + @@DATEFIRST - 1) % 7) != 6 
-      GROUP BY P.NombrePasillo
-      ORDER BY Promedio DESC
+      GROUP BY P.Nombre ORDER BY Promedio DESC
     `;
 
     const statsEnCurso = await pool.request().query(queryBase(inicioEnCurso, new Date()));
     const statsPublicadas = await pool.request().query(queryBase(inicioPublicado, finPublicado));
 
-    res.json({
-      success: true,
-      data: {
-        enCurso: statsEnCurso.recordset,     
-        publicadas: statsPublicadas.recordset, 
-        ultimoCorte: inicioEnCurso
-      }
-    });
-
+    res.json({ success: true, data: { enCurso: statsEnCurso.recordset, publicadas: statsPublicadas.recordset, ultimoCorte: inicioEnCurso }});
   } catch (error) {
-    console.error("Error estadisticas:", error);
     res.status(500).json({ success: false, message: 'Error interno' });
   }
 });
 
-// ==========================================
-// 7. REALIZAR CORTE MANUAL
-// ==========================================
+// 7. REALIZAR CORTE
 router.post('/realizar-corte', async (req, res) => {
   const { realizadoPor } = req.body; 
   try {
@@ -260,23 +215,17 @@ router.post('/realizar-corte', async (req, res) => {
     await pool.request()
       .input('RealizadoPor', sql.VarChar(20), realizadoPor)
       .query(`INSERT INTO dormi.CortesLimpieza (FechaCorte, RealizadoPor) VALUES (GETDATE(), @RealizadoPor)`);
-      
-    res.json({ success: true, message: 'Corte realizado. Las estadísticas se han reiniciado.' });
+    res.json({ success: true, message: 'Corte realizado.' });
   } catch (error) {
-    console.error(error);
     res.status(500).json({ success: false, message: 'Error al realizar corte' });
   }
 });
 
-// ==========================================
-// 8. OBTENER LISTA DE SEMESTRES
-// ==========================================
+// 8. OBTENER SEMESTRES
 router.get('/semestres-lista', async (req, res) => {
   try {
     const pool = await getConnection();
-    const result = await pool.request().query(`
-      SELECT IdSemestre, Nombre, Activo FROM dormi.Semestres ORDER BY IdSemestre DESC
-    `);
+    const result = await pool.request().query(`SELECT IdSemestre, Nombre, Activo FROM dormi.Semestres ORDER BY IdSemestre DESC`);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
