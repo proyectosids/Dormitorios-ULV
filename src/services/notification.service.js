@@ -1,15 +1,11 @@
 import admin from 'firebase-admin';
 import { getConnection } from '../db.js';
 import sql from 'mssql';
+import { readFile } from 'fs/promises';
 
-// 🛑 Validación clara
-if (!process.env.FIREBASE_SERVICE_ACCOUNT_B64) {
-  throw new Error('FIREBASE_SERVICE_ACCOUNT_B64 no está definida en el .env');
-}
-
-// 🔐 Convertimos Base64 → JSON
+// 🔥 Cargar el archivo JSON directamente
 const serviceAccount = JSON.parse(
-  Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_B64, 'base64').toString('utf8')
+  await readFile(new URL('../firebase-service-account.json', import.meta.url))
 );
 
 // 🔥 Inicializar Firebase solo una vez
@@ -17,6 +13,7 @@ if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
   });
+  console.log("🔥 Firebase Admin inicializado correctamente para producción");
 }
 
 // 📩 Función reutilizable para enviar notificaciones
@@ -24,8 +21,7 @@ export const enviarNotificacion = async (matricula, titulo, mensaje) => {
   try {
     const pool = await getConnection();
 
-    // 1️⃣ Obtener token FCM desde BD
-    // CORRECCIÓN AQUÍ: Agregamos 'dormi.' antes de Usuarios
+    // 1️⃣ Obtener token FCM desde la tabla Usuarios del esquema DORMI
     const result = await pool.request()
       .input('Matricula', sql.VarChar, matricula)
       .query('SELECT FCMToken FROM dormi.Usuarios WHERE UsuarioID = @Matricula');
@@ -33,13 +29,13 @@ export const enviarNotificacion = async (matricula, titulo, mensaje) => {
     const token = result.recordset[0]?.FCMToken;
 
     if (!token) {
-      console.log(`⚠️ El usuario ${matricula} no tiene token registrado.`);
+      console.log(`⚠️ El usuario ${matricula} no tiene token en dormi.Usuarios.`);
       return;
     }
 
-    // 2️⃣ Enviar notificación
-    await admin.messaging().send({
-      token,
+    // 2️⃣ Construir y enviar el mensaje
+    const message = {
+      token: token,
       notification: {
         title: titulo,
         body: mensaje,
@@ -48,9 +44,16 @@ export const enviarNotificacion = async (matricula, titulo, mensaje) => {
         click_action: 'FLUTTER_NOTIFICATION_CLICK',
         tipo: 'INFO',
       },
-    });
+      android: {
+        notification: {
+          channel_id: 'high_importance_channel',
+          priority: 'high',
+        },
+      },
+    };
 
-    console.log(`✅ Notificación enviada a ${matricula}`);
+    await admin.messaging().send(message);
+    console.log(`✅ Notificación enviada con éxito a: ${matricula}`);
 
   } catch (error) {
     console.error('❌ Error enviando notificación:', error);

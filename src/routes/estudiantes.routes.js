@@ -4,9 +4,7 @@ import sql from 'mssql';
 
 const router = Router();
 
-// ==========================================
-// 1. GET: Listar todos (básico)
-// ==========================================
+// 1. GET: Listar todos
 router.get('/', async (req, res) => {
   try {
     const pool = await getConnection();
@@ -26,10 +24,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// ==========================================
 // 2. GET: Estudiantes para asignación
-// (Esta debe ir ANTES de /:matricula)
-// ==========================================
 router.get('/para-asignacion', async (req, res) => {
   try {
     const pool = await getConnection();
@@ -45,15 +40,11 @@ router.get('/para-asignacion', async (req, res) => {
     `);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
-    console.error(error);
     res.status(500).json({ success: false, message: 'Error al obtener estudiantes' });
   }
 });
 
-// ==========================================
 // 3. PUT: Asignar cuarto
-// (Esta debe ir ANTES de /:matricula)
-// ==========================================
 router.put('/asignar-cuarto', async (req, res) => {
   const { matricula, idDormitorio, idPasillo, idCuarto } = req.body;
 
@@ -79,23 +70,15 @@ router.put('/asignar-cuarto', async (req, res) => {
 
     res.json({ success: true, message: 'Asignación completa guardada.' });
   } catch (error) {
-    console.error(error);
     res.status(500).json({ success: false, message: 'Error al asignar cuarto.' });
   }
 });
 
-// ==========================================
-// 4. GET: Obtener FOTO de perfil
-// (Consulta a BD Externa - NO CAMBIAR ESQUEMA)
-// ==========================================
+// 4. GET: Obtener FOTO de perfil (Base de datos externa SIAE)
 router.get('/:matricula/foto', async (req, res) => {
   const { matricula } = req.params;
-
   try {
     const pool = await getConnection();
-    
-    // NOTA: Esta consulta apunta a [IDS-APP].[dbo], que es EXTERNO.
-    // NO le agregamos 'dormi.' porque fallaría.
     const result = await pool.request()
       .input('Matricula', sql.VarChar(20), matricula)
       .query(`
@@ -114,16 +97,11 @@ router.get('/:matricula/foto', async (req, res) => {
       res.status(404).send('Foto no encontrada');
     }
   } catch (error) {
-    console.error("Error al obtener foto:", error);
     res.status(500).send('Error del servidor');
   }
 });
 
-
-// ---------------------------------------------------------
-// RUTAS DINÁMICAS (/:matricula) - SIEMPRE AL FINAL
-// ---------------------------------------------------------
-
+// 5. GET: Buscar por matrícula
 router.get('/:matricula', async (req, res) => {
   const { matricula } = req.params;
   try {
@@ -151,6 +129,7 @@ router.get('/:matricula', async (req, res) => {
   }
 });
 
+// 6. PUT: Actualizar datos básicos
 router.put('/:matricula', async (req, res) => {
   const { matricula } = req.params;
   const { nombreCompleto, carrera, idCuarto } = req.body;

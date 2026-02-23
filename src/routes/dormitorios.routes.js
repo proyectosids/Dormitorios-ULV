@@ -4,9 +4,7 @@ import sql from 'mssql';
 
 const router = Router();
 
-// ==========================================
 // 0. Obtener lista de DORMITORIOS (Edificios)
-// ==========================================
 router.get('/', async (req, res) => {
   try {
     const pool = await getConnection();
@@ -17,13 +15,10 @@ router.get('/', async (req, res) => {
   }
 });
 
-// ==========================================
 // 1. Obtener todos los PASILLOS
-// ==========================================
 router.get('/pasillos', async (req, res) => {
   try {
     const pool = await getConnection();
-    // Ajusta la consulta si quieres filtrar por dormitorio específico
     const result = await pool.request().query('SELECT * FROM dormi.Pasillos');
     res.json({ success: true, data: result.recordset });
   } catch (error) {
@@ -31,11 +26,9 @@ router.get('/pasillos', async (req, res) => {
   }
 });
 
-// ==========================================
 // 2. Obtener CUARTOS de un pasillo específico
-// ==========================================
 router.get('/cuartos', async (req, res) => {
-  const { idPasillo } = req.query; // Recibimos ?idPasillo=1
+  const { idPasillo } = req.query;
 
   if (!idPasillo) {
     return res.status(400).json({ success: false, message: 'Falta el idPasillo' });
@@ -48,8 +41,6 @@ router.get('/cuartos', async (req, res) => {
       .query(`
         SELECT * FROM dormi.Cuartos 
         WHERE IdPasillo = @IdPasillo
-        -- Opcional: Mostrar solo cuartos con espacio disponible
-        -- AND (Capacidad - (SELECT COUNT(*) FROM dormi.Estudiantes WHERE IdCuarto = Cuartos.IdCuarto)) > 0
       `);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
@@ -57,9 +48,7 @@ router.get('/cuartos', async (req, res) => {
   }
 });
 
-// ==========================================
-// 3. Obtener el MAPA DE OCUPACIÓN
-// ==========================================
+// 3. Obtener el MAPA DE OCUPACIÓN (Quién está en qué cuarto)
 router.get('/ocupacion', async (req, res) => {
   try {
     const pool = await getConnection();
@@ -76,8 +65,6 @@ router.get('/ocupacion', async (req, res) => {
       ORDER BY P.NombrePasillo, C.NumeroCuarto
     `);
     
-    // La consulta devuelve filas planas (repetidas por estudiante).
-    // El frontend se encargará de agruparlas.
     res.json({ success: true, data: result.recordset });
 
   } catch (error) {
