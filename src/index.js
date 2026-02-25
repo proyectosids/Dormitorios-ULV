@@ -32,7 +32,7 @@ app.use('/api/limpieza', limpiezaRoutes);
 app.use('/api/estudiantes', estudiatesRoutes);
 app.use('/api/dormitorios', dormitoriosRoutes);
 app.use('/api/cultos', cultosRoutes);
-app.use('/api/reportes', reportesRoutes);   
+app.use('/api/reportes', reportesRoutes);
 app.use('/api/amonestaciones', amonestacionesRoutes);
 app.use('/api/asistencia', asistenciaRoutes);
 app.use('/api/usuarios', usuariosRoutes);
@@ -41,9 +41,15 @@ app.use('/api/configuracion', configuracionRoutes);
 // ✅ ACTIVAR RUTA DE FIRMAS
 app.use('/api/firmas', firmasRoutes);
 
+// Health check para CapRover
+app.get('/', (req, res) => {
+  res.status(200).send('API Hogar Universitario funcionando 🚀');
+});
+
+
 // 🧠 Configuración del puerto y host para red local/producción
 const PORT = process.env.PORT || 5000;
-const HOST = '0.0.0.0';  
+const HOST = '0.0.0.0';
 
 app.listen(PORT, HOST, () => {
   console.log(`✅ Servidor Hogar Universitario corriendo en http://${HOST}:${PORT}`);
