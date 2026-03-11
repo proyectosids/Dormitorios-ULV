@@ -32,12 +32,12 @@ export const enviarNotificacion = async (matricula, titulo, mensaje) => {
     // 1️⃣ Obtener token FCM desde la tabla Usuarios del esquema DORMI
     const result = await pool.request()
       .input('Matricula', sql.VarChar, matricula)
-      .query('SELECT FCMToken FROM dormi.Usuarios WHERE UsuarioID = @Matricula');
+      .query('SELECT FCMToken FROM Usuarios WHERE UsuarioID = @Matricula');
 
     const token = result.recordset[0]?.FCMToken;
 
     if (!token) {
-      console.log(`El usuario ${matricula} no tiene token en dormi.Usuarios.`);
+      console.log(`El usuario ${matricula} no tiene token en Usuarios.`);
       return;
     }
 
