@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { getConnection } from '../db.js';
 import sql from 'mssql';
 import multer from 'multer';
-import { subirImagen } from '../services/cloydinary.service.js';
+import { subirImagen } from '../services/cloudinary.service.js';
 import { enviarNotificacion } from '../services/notification.service.js';
 
 const router = Router();
