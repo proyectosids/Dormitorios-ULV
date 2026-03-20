@@ -13,8 +13,7 @@ import asistenciaRoutes from './routes/asistencia.routes.js';
 import usuariosRoutes from './routes/usuarios.routes.js';
 import dormitoriosRoutes from './routes/dormitorios.routes.js';
 import configuracionRoutes from './routes/configuracion.routes.js';
-
-// ✅ NUEVA RUTA PARA FIRMAS
+import './services/cron.service.js';
 import firmasRoutes from './routes/firmas.routes.js';
 
 dotenv.config();

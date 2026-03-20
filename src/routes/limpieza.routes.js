@@ -1,9 +1,17 @@
 import { Router } from 'express';
 import { getConnection } from '../db.js';
 import sql from 'mssql';
+import multer from 'multer';
+import { subirImagen } from '../services/cloydinary.service.js';
 import { enviarNotificacion } from '../services/notification.service.js';
 
 const router = Router();
+
+// Configuración de multer para procesar la imagen en memoria
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 } // Límite de 5MB
+});
 
 // 1. Obtener DETALLE de limpieza
 router.get('/detalle/:idCuarto', async (req, res) => {
@@ -14,7 +22,7 @@ router.get('/detalle/:idCuarto', async (req, res) => {
       .input('IdCuarto', sql.Int, idCuarto)
       .query(`
         SELECT TOP 1
-          L.IdLimpieza, L.Fecha, L.OrdenGeneral, L.Disciplina, L.TotalFinal,
+          L.IdLimpieza, L.Fecha, L.OrdenGeneral, L.Disciplina, L.TotalFinal, L.UrlFoto,
           E.NombreCompleto AS EvaluadoPor, 
           C.NumeroCuarto,
           (SELECT SUM(Calificacion) FROM dormi.LimpiezaDetalle WHERE IdLimpieza = L.IdLimpieza) as Subtotal
@@ -43,25 +51,51 @@ router.get('/detalle/:idCuarto', async (req, res) => {
       data: { ...limpieza.recordset[0], Detalle: detalle.recordset }
     });
   } catch (error) {
+    console.error("Error en /detalle/:idCuarto:", error);
     res.status(500).json({ success: false, message: 'Error al obtener el detalle', error: error.message });
   }
 });
 
-// 2. REGISTRAR Limpieza (CON NOTIFICACIONES PUSH)
-router.post('/registrar', async (req, res) => {
+// 2. REGISTRAR Limpieza (CON FOTO Y NOTIFICACIONES)
+router.post('/registrar', upload.single('evidencia'), async (req, res) => {
   const { idCuarto, evaluadoPor, detallesMatutinos, ordenGeneral, disciplina, observaciones } = req.body;
   
-  if (!idCuarto || !evaluadoPor || !Array.isArray(detallesMatutinos) || detallesMatutinos.length === 0 || ordenGeneral === undefined || disciplina === undefined) {
+  // Parseamos detallesMatutinos ya que Multer lo recibe como string JSON desde Flutter
+  let criteriosArray = [];
+  try {
+    criteriosArray = typeof detallesMatutinos === 'string' ? JSON.parse(detallesMatutinos) : detallesMatutinos;
+  } catch (e) {
+    return res.status(400).json({ success: false, message: 'Formato de criterios inválido.' });
+  }
+
+  if (!idCuarto || !evaluadoPor || !Array.isArray(criteriosArray) || criteriosArray.length === 0) {
     return res.status(400).json({ success: false, message: 'Faltan parámetros requeridos.' });
   }
   
   const pool = await getConnection();
   const transaction = pool.transaction(); 
+  
   try {
+    let urlFotoCloudinary = null;
+    let publicIdCloudinary = null;
+
+    // 1. Subida a Cloudinary si existe archivo
+    if (req.file) {
+      try {
+        const uploadResult = await subirImagen(req.file.buffer);
+        urlFotoCloudinary = uploadResult.url;
+        publicIdCloudinary = uploadResult.publicId; 
+      } catch (cloudErr) {
+        console.error("Error subiendo a Cloudinary:", cloudErr);
+      }
+    }
+
     await transaction.begin();
-    const subtotal = detallesMatutinos.reduce((acc, item) => acc + (parseInt(item.calificacion, 10) || 0), 0);
+    
+    const subtotal = criteriosArray.reduce((acc, item) => acc + (parseInt(item.calificacion, 10) || 0), 0);
     const totalFinal = subtotal + (parseInt(ordenGeneral, 10) || 0) + (parseInt(disciplina, 10) || 0);
     
+    // 2. Insertar Cabecera en dormi.Limpieza
     const limpiezaResult = await new sql.Request(transaction)
       .input('IdCuarto', sql.Int, idCuarto)
       .input('Fecha', sql.DateTime, new Date())
@@ -70,15 +104,18 @@ router.post('/registrar', async (req, res) => {
       .input('OrdenGeneral', sql.Int, ordenGeneral)
       .input('Disciplina', sql.Int, disciplina)
       .input('TotalFinal', sql.Int, totalFinal)
+      .input('UrlFoto', sql.VarChar(sql.MAX), urlFotoCloudinary)
+      .input('PublicIdFoto', sql.VarChar(100), publicIdCloudinary)
       .query(`
-        INSERT INTO dormi.Limpieza (IdCuarto, Fecha, EvaluadoPorMatricula, Observaciones, OrdenGeneral, Disciplina, TotalFinal)
+        INSERT INTO dormi.Limpieza (IdCuarto, Fecha, EvaluadoPorMatricula, Observaciones, OrdenGeneral, Disciplina, TotalFinal, UrlFoto, PublicIdFoto)
         OUTPUT INSERTED.IdLimpieza
-        VALUES (@IdCuarto, @Fecha, @EvaluadoPorMatricula, @Observaciones, @OrdenGeneral, @Disciplina, @TotalFinal)
+        VALUES (@IdCuarto, @Fecha, @EvaluadoPorMatricula, @Observaciones, @OrdenGeneral, @Disciplina, @TotalFinal, @UrlFoto, @PublicIdFoto)
       `);
       
     const idLimpieza = limpiezaResult.recordset[0].IdLimpieza;
     
-    for (const detalle of detallesMatutinos) {
+    // 3. Insertar Detalles en dormi.LimpiezaDetalle
+    for (const detalle of criteriosArray) {
       await new sql.Request(transaction)
         .input('IdLimpieza', sql.Int, idLimpieza)
         .input('IdCriterio', sql.Int, detalle.idCriterio)
@@ -88,7 +125,7 @@ router.post('/registrar', async (req, res) => {
     
     await transaction.commit();
 
-    // --- NOTIFICACIONES ---
+    // 4. Notificaciones
     try {
         const resultEstudiantes = await pool.request()
             .input('IdCuarto', sql.Int, idCuarto)
@@ -97,18 +134,19 @@ router.post('/registrar', async (req, res) => {
         resultEstudiantes.recordset.forEach(estudiante => {
             enviarNotificacion(
                 estudiante.Matricula,
-                "🏠 Limpieza Calificada",
-                `Tu cuarto ha sido evaluado hoy con un total de ${totalFinal} puntos.`
+                " Limpieza Calificada",
+                `Tu cuarto ha sido evaluado hoy con ${totalFinal} puntos.`
             );
         });
     } catch (errNotif) {
-        console.error("Error notificaciones limpieza:", errNotif);
+        console.error("Error en notificaciones:", errNotif);
     }
 
-    res.status(201).json({ success: true, message: 'Limpieza registrada exitosamente', idLimpieza });
+    res.status(201).json({ success: true, message: 'Limpieza registrada exitosamente', idLimpieza, urlFoto: urlFotoCloudinary });
   } catch (error) {
-    await transaction.rollback();
-    res.status(500).json({ success: false, message: 'Error al registrar la limpieza', error: error.message });
+    if (transaction) await transaction.rollback();
+    console.error("Error en POST /registrar:", error);
+    res.status(500).json({ success: false, message: 'Error al registrar', error: error.message });
   }
 });
 
@@ -119,6 +157,7 @@ router.get('/criterios', async (req, res) => {
     const result = await pool.request().query(`SELECT IdCriterio, Descripcion FROM dormi.CriteriosLimpieza ORDER BY IdCriterio`);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
+    console.error("Error en GET/criterios: ", error);
     res.status(500).json({ success: false, message: 'Error al obtener criterios', error: error.message });
   }
 });
@@ -134,13 +173,18 @@ router.get('/cuartos-con-calificacion', async (req, res) => {
           ROW_NUMBER() OVER(PARTITION BY IdCuarto ORDER BY Fecha DESC, IdLimpieza DESC) as rn 
         FROM dormi.Limpieza
       )
-      SELECT C.IdCuarto, C.NumeroCuarto, C.IdPasillo, UL.TotalFinal AS UltimaCalificacion 
+      SELECT 
+        C.IdCuarto,
+        C.NumeroCuarto,
+        C.IdPasillo, 
+        UL.TotalFinal AS UltimaCalificacion 
       FROM dormi.Cuartos C
       LEFT JOIN UltimaLimpieza UL ON C.IdCuarto = UL.IdCuarto AND UL.rn = 1 
       ORDER BY C.IdPasillo, C.NumeroCuarto;
     `);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
+    console.error("Error en GET /cuartos-con-calificacion:", error);
     res.status(500).json({ success: false, message: 'Error al obtener cuartos', error: error.message });
   }
 });
@@ -161,6 +205,7 @@ router.get('/historial/:idCuarto', async (req, res) => {
       `);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
+    console.error("Error en GET /historial/:idCuarto:", error);
     res.status(500).json({ success: false, message: 'Error al obtener historial', error: error.message });
   }
 });
@@ -170,7 +215,7 @@ router.get('/estadisticas/generales', async (req, res) => {
   const { idSemestre } = req.query;
   try {
     const pool = await getConnection();
-    let fechaInicioSemestre = '2025-01-01'; 
+    let fechaInicioSemestre = '2026-01-01'; 
     
     if (idSemestre) {
         const sem = await pool.request().input('Id', sql.Int, idSemestre).query("SELECT FechaInicio FROM dormi.Semestres WHERE IdSemestre = @Id");
@@ -182,27 +227,42 @@ router.get('/estadisticas/generales', async (req, res) => {
 
     const cortes = await pool.request()
       .input('FechaSemestre', sql.DateTime, fechaInicioSemestre)
-      .query(`SELECT TOP 2 FechaCorte FROM dormi.CortesLimpieza WHERE FechaCorte >= @FechaSemestre ORDER BY FechaCorte DESC`);
+      .query(`
+        SELECT TOP 2 FechaCorte 
+        FROM dormi.CortesLimpieza 
+        WHERE FechaCorte >= @FechaSemestre 
+        ORDER BY FechaCorte DESC
+      `);
 
     let inicioEnCurso = (cortes.recordset.length > 0) ? cortes.recordset[0].FechaCorte : fechaInicioSemestre;
     let inicioPublicado = (cortes.recordset.length > 1) ? cortes.recordset[1].FechaCorte : fechaInicioSemestre;
     let finPublicado = (cortes.recordset.length > 0) ? cortes.recordset[0].FechaCorte : new Date();
 
     const queryBase = (fechaIni, fechaFin) => `
-      SELECT ISNULL(P.Nombre, 'Sin Pasillo') AS Pasillo, AVG(CAST(L.TotalFinal AS FLOAT)) AS Promedio
+      SELECT
+         ISNULL(P.Nombre, 'Sin Pasillo') AS Pasillo, 
+         AVG(CAST(L.TotalFinal AS FLOAT)) AS Promedio
       FROM dormi.Limpieza L
       INNER JOIN dormi.Cuartos C ON L.IdCuarto = C.IdCuarto
       LEFT JOIN dormi.Pasillos P ON C.IdPasillo = P.IdPasillo
-      WHERE L.Fecha > '${new Date(fechaIni).toISOString()}' AND L.Fecha <= '${new Date(fechaFin).toISOString()}'
+      WHERE L.Fecha > '${new Date(fechaIni).toISOString()}' 
+        AND L.Fecha <= '${new Date(fechaFin).toISOString()}'
         AND ((DATEPART(dw, L.Fecha) + @@DATEFIRST - 1) % 7) != 6 
-      GROUP BY P.Nombre ORDER BY Promedio DESC
+      GROUP BY P.Nombre 
+      ORDER BY Promedio DESC
     `;
 
     const statsEnCurso = await pool.request().query(queryBase(inicioEnCurso, new Date()));
     const statsPublicadas = await pool.request().query(queryBase(inicioPublicado, finPublicado));
 
-    res.json({ success: true, data: { enCurso: statsEnCurso.recordset, publicadas: statsPublicadas.recordset, ultimoCorte: inicioEnCurso }});
+    res.json({ 
+      success: true, 
+      data: { 
+        enCurso: statsEnCurso.recordset, 
+        publicadas: statsPublicadas.recordset, 
+        ultimoCorte: inicioEnCurso }});
   } catch (error) {
+    console.error("Error estadisticas:", error);
     res.status(500).json({ success: false, message: 'Error interno' });
   }
 });
@@ -225,7 +285,9 @@ router.post('/realizar-corte', async (req, res) => {
 router.get('/semestres-lista', async (req, res) => {
   try {
     const pool = await getConnection();
-    const result = await pool.request().query(`SELECT IdSemestre, Nombre, Activo FROM dormi.Semestres ORDER BY IdSemestre DESC`);
+    const result = await pool.request().query(`
+      SELECT IdSemestre, Nombre, Activo FROM dormi.Semestres ORDER BY IdSemestre DESC
+    `);
     res.json({ success: true, data: result.recordset });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
