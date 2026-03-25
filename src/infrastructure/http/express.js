@@ -4,8 +4,8 @@ import dotenv from 'dotenv';
 
 // Importación de rutas (Asegúrate de que las rutas sean correctas desde esta carpeta)
 import authRoutes from './routes/auth.js';
-import limpiezaRoutes from './routes/limpieza.js'; // La nueva refactorizada
-import estudiatesRoutes from '../../../routes/estudiantes.routes.js';
+import limpiezaRoutes from './routes/limpieza.js'; 
+import estudiatesRoutes from './routes/estudiantes.js';
 import cultosRoutes from '../../../routes/cultos.routes.js';
 import reportesRoutes from '../../../routes/reportes.routes.js';
 import amonestacionesRoutes from '../../../routes/amonestaciones.routes.js';
