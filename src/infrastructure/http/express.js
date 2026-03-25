@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 
 // Importación de rutas (Asegúrate de que las rutas sean correctas desde esta carpeta)
-import authRoutes from '../../../routes/auth.routes.js';
+import authRoutes from './routes/auth.js';
 import limpiezaRoutes from './routes/limpieza.js'; // La nueva refactorizada
 import estudiatesRoutes from '../../../routes/estudiantes.routes.js';
 import cultosRoutes from '../../../routes/cultos.routes.js';
