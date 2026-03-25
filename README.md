@@ -14,3 +14,13 @@
 
 ## Integración con Flutter
 - Se validó que la App móvil sigue enviando los datos correctamente al endpoint `/api/limpieza/registrar`, confirmando que la refactorización interna no rompió la comunicación externa.
+
+# Modulo Auth
+## Problema Identificado: 
+El manejo de contraseñas (bcrypt) y las llamadas externas a la API de la ULV (axios) estaban mezcladas con la lógica de las rutas, rompiendo el principio de responsabilidad única.
+
+## Mejora Aplicada:
+Se implementó el patrón Repository para centralizar el acceso a la tabla dormi.Usuarios y se crearon Casos de Uso para manejar de forma independiente la validación de acceso externo y el cifrado de datos.
+
+## Dificultades:
+Coordinar transacciones SQL complejas que afectan a múltiples tablas (Usuarios y Estudiantes) al momento del registro, lo cual se resolvió encapsulando la transacción dentro del repositorio.
