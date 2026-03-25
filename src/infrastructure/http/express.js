@@ -6,12 +6,13 @@ import dotenv from 'dotenv';
 import authRoutes from './routes/auth.js';
 import limpiezaRoutes from './routes/limpieza.js'; 
 import estudiatesRoutes from './routes/estudiantes.js';
+import dormitoriosRoutes from './routes/dormitorios.js';
 import cultosRoutes from '../../../routes/cultos.routes.js';
 import reportesRoutes from '../../../routes/reportes.routes.js';
 import amonestacionesRoutes from '../../../routes/amonestaciones.routes.js';
 import asistenciaRoutes from '../../../routes/asistencia.routes.js';
 import usuariosRoutes from '../../../routes/usuarios.routes.js';
-import dormitoriosRoutes from '../../../routes/dormitorios.routes.js';
+
 import configuracionRoutes from '../../../routes/configuracion.routes.js';
 import firmasRoutes from '../../../routes/firmas.routes.js';
 
