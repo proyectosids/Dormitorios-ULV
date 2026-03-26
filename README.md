@@ -96,3 +96,29 @@ El "Mapa de Ocupación" fue validado para asegurar que los nombres de los estudi
 
 ### 3. Integración con Flutter
 - Se mantuvo el contrato de respuesta JSON (`success`, `data`) para asegurar que los selectores de tipo de culto en la aplicación móvil Flutter sigan cargando la lista de opciones correctamente desde el servidor.
+
+# Módulo de Reportes
+## 1. Problemas Identificados en el Código Original
+Lógica de Negocio Dispersa: La regla de "acumulación de 3 reportes para generar una amonestación" estaba escrita dentro del controlador de Express. Esto dificultaba su mantenimiento y pruebas unitarias.
+
+Falta de Atomicidad: Si el sistema creaba el reporte pero fallaba al crear la amonestación automática, los datos quedaban inconsistentes.
+
+Consultas SQL Gigantes: El uso de subconsultas (getReportanteNombreQuery) y LEFT JOINs complejos dentro de la ruta hacía que el código fuera difícil de leer y propenso a errores de sintaxis.
+
+## 2. Mejoras Aplicadas (Arquitectura Limpia)
+Capa de Dominio: Se implementó la entidad Reporte.js, la cual se encarga de definir el estado inicial del reporte basándose únicamente en el tipo de usuario que lo crea (Regla de Negocio Pura).
+
+Capa de Aplicación (Casos de Uso):
+
+Se creó CrearReporte.js para orquestar el flujo completo: guardar el reporte, verificar acumulaciones y disparar notificaciones push.
+
+Capa de Infraestructura (Transaccionalidad):
+
+Se implementó una Transacción SQL en ReporteRepositorySql.js. Esto garantiza que el reporte y la amonestación se guarden juntos o no se guarde nada, protegiendo la integridad de la base de datos.
+
+Paginación Abstraída: La lógica de OFFSET y FETCH NEXT se movió al repositorio, permitiendo que la API maneje grandes volúmenes de datos de forma eficiente.
+
+## 3. Integración con Flutter
+Se mantuvo la estructura de la respuesta paginada (total, page, limit) para que el scroll infinito y los buscadores en la App de Flutter sigan funcionando sin cambios en el frontend.
+
+Se validó que las notificaciones push lleguen al dispositivo del estudiante inmediatamente después de que un preceptor apruebe un reporte pendiente.
