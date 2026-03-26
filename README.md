@@ -96,3 +96,46 @@ El "Mapa de Ocupación" fue validado para asegurar que los nombres de los estudi
 
 ### 3. Integración con Flutter
 - Se mantuvo el contrato de respuesta JSON (`success`, `data`) para asegurar que los selectores de tipo de culto en la aplicación móvil Flutter sigan cargando la lista de opciones correctamente desde el servidor.
+
+# Módulo de Reportes
+## 1. Problemas Identificados en el Código Original
+Lógica de Negocio Dispersa: La regla de "acumulación de 3 reportes para generar una amonestación" estaba escrita dentro del controlador de Express. Esto dificultaba su mantenimiento y pruebas unitarias.
+
+Falta de Atomicidad: Si el sistema creaba el reporte pero fallaba al crear la amonestación automática, los datos quedaban inconsistentes.
+
+Consultas SQL Gigantes: El uso de subconsultas (getReportanteNombreQuery) y LEFT JOINs complejos dentro de la ruta hacía que el código fuera difícil de leer y propenso a errores de sintaxis.
+
+## 2. Mejoras Aplicadas (Arquitectura Limpia)
+Capa de Dominio: Se implementó la entidad Reporte.js, la cual se encarga de definir el estado inicial del reporte basándose únicamente en el tipo de usuario que lo crea (Regla de Negocio Pura).
+
+Capa de Aplicación (Casos de Uso):
+
+Se creó CrearReporte.js para orquestar el flujo completo: guardar el reporte, verificar acumulaciones y disparar notificaciones push.
+
+Capa de Infraestructura (Transaccionalidad):
+
+Se implementó una Transacción SQL en ReporteRepositorySql.js. Esto garantiza que el reporte y la amonestación se guarden juntos o no se guarde nada, protegiendo la integridad de la base de datos.
+
+Paginación Abstraída: La lógica de OFFSET y FETCH NEXT se movió al repositorio, permitiendo que la API maneje grandes volúmenes de datos de forma eficiente.
+
+## 3. Integración con Flutter
+Se mantuvo la estructura de la respuesta paginada (total, page, limit) para que el scroll infinito y los buscadores en la App de Flutter sigan funcionando sin cambios en el frontend.
+
+Se validó que las notificaciones push lleguen al dispositivo del estudiante inmediatamente después de que un preceptor apruebe un reporte pendiente.
+
+# Módulo de Amonestaciones
+
+## 1. Problemas Identificados en el Código Original
+- **Duplicidad de Consultas**: La lógica para obtener niveles de amonestación y el listado general estaba acoplada a las rutas, dificultando la reutilización del catálogo en otros módulos.
+- **Falta de Abstracción de Notificaciones**: El envío de alertas push estaba "quemado" dentro del controlador, lo que impedía registrar una amonestación sin disparar obligatoriamente una notificación (importante para procesos automáticos).
+
+## 2. Mejoras Aplicadas (Arquitectura Limpia)
+- **Capa de Dominio**: Se estandarizó la entidad `Amonestacion.js` para asegurar que todas las sanciones tengan una fecha de registro consistente generada por el sistema.
+- **Capa de Aplicación**: El Caso de Uso `RegistrarAmonestacion.js` ahora centraliza la responsabilidad de persistir la sanción y comunicar al estudiante de forma asíncrona.
+- **Capa de Infraestructura**:
+    - Se centralizaron los `JOINs` complejos en `AmonestacionRepositorySql.js`, permitiendo obtener nombres de preceptores y niveles de catálogo de forma eficiente y en un solo lugar.
+    - Se optimizó el endpoint de `/niveles` para servir como un microservicio de catálogo reutilizable por toda la infraestructura.
+
+## 3. Integración con Flutter
+- Se validó que la App de Flutter reciba correctamente la lista de niveles para llenar los `DropdownButton` en el formulario de registro de disciplina.
+- Se confirmó que el historial de amonestaciones por estudiante se cargue con los nombres de los preceptores involucrados, mejorando la transparencia del proceso disciplinario en el móvil.
