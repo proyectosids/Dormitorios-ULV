@@ -58,8 +58,26 @@ Se verificó que el endpoint de la foto (/api/estudiantes/:matricula/foto) sigue
 La funcionalidad de asignación de cuartos fue probada desde la App, confirmando que los cambios de estado en SQL Server se realizan correctamente bajo el nuevo flujo de capas.
 
 
-Caso de Uso: src/application/usecases/ObtenerFotoEstudiante.js (Orquestador).
+# Módulo de Dormitorios
+## 1. Problemas Identificados en el Código Original
+Lógica de Relaciones Expuesta: Las consultas que unían Pasillos, Cuartos y Estudiantes estaban escritas directamente en el archivo de rutas, exponiendo la complejidad de la base de datos a la capa de transporte (HTTP).
 
-Repositorio: src/infrastructure/repositories/EstudianteRepositorySql.js (SQL puro).
+Dificultad de Agrupación: Al no existir una capa de aplicación, cualquier lógica para agrupar estudiantes por pasillo o edificio tenía que hacerse en Flutter o mezclarse con el código de Express.
 
-Ruta Refactorizada: src/infrastructure/http/routes/estudiantes.js (Llamada limpia).
+Inexistencia de Modelos de Dominio: No se contaba con clases que representaran la infraestructura física (Edificios, Pasillos), lo que limitaba la validación de reglas de negocio (como no exceder la capacidad de un cuarto).
+
+## 2. Mejoras Aplicadas (Arquitectura Limpia)
+Capa de Dominio: Se crearon las entidades Dormitorio, Pasillo y Cuarto. Esto permite que el sistema entienda la jerarquía física del Hogar Universitario independientemente de la base de datos.
+
+Capa de Aplicación: Se implementó el caso de uso ObtenerMapaOcupacion.js, el cual se encarga de orquestar la información necesaria para que la administración visualice el estado de los edificios en tiempo real.
+
+Capa de Infraestructura (Patrón Repository):
+
+Se centralizaron las consultas en DormitorioRepositorySql.js.
+
+Mantenibilidad: La consulta de ocupación (que usa múltiples LEFT JOINs) quedó encapsulada. Si la estructura de las tablas de dormitorios cambia, el resto de la API no se ve afectada.
+
+## 3. Integración con Flutter
+Se garantizó que los endpoints mantuvieran el mismo contrato de datos para que las listas desplegables (Dropdowns) de selección de pasillo y cuarto en la App de Flutter sigan funcionando sin ajustes en el frontend.
+
+El "Mapa de Ocupación" fue validado para asegurar que los nombres de los estudiantes aparezcan correctamente vinculados a sus números de cuarto correspondientes.
