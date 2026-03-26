@@ -139,3 +139,30 @@ Se validó que las notificaciones push lleguen al dispositivo del estudiante inm
 ## 3. Integración con Flutter
 - Se validó que la App de Flutter reciba correctamente la lista de niveles para llenar los `DropdownButton` en el formulario de registro de disciplina.
 - Se confirmó que el historial de amonestaciones por estudiante se cargue con los nombres de los preceptores involucrados, mejorando la transparencia del proceso disciplinario en el móvil.
+
+
+# Módulo de Asistencia (Cultos)
+## 1. Problemas Identificados en el Código Original
+Procesamiento Masivo Ineficiente: La lógica para reportar faltantes iteraba sobre una lista de matrículas realizando múltiples consultas SQL individuales por cada estudiante, lo que sobrecargaba el pool de conexiones.
+
+Lógica de Negocio Oculta: Las reglas que definen el límite de faltas (2 para cultos vespertinos, 3 para otros) estaban mezcladas con el código del servidor Express, lo que hacía que el sistema fuera difícil de ajustar si las reglas de la institución cambiaban.
+
+Riesgo de Inconsistencia: El envío de notificaciones push y el registro de amonestaciones automáticas no estaban protegidos por una transacción robusta, permitiendo que un error en la red dejara registros a medias.
+
+## 2. Mejoras Aplicadas (Arquitectura Limpia)
+Capa de Dominio: Se creó la entidad Asistencia.js para estandarizar el registro de asistencia, independientemente de si se captura por ID o por nombre del culto.
+
+Capa de Aplicación (Casos de Uso):
+
+Se implementó ReportarInasistenciaMasiva.js, un orquestador que coordina la persistencia en lote y el envío de notificaciones push personalizadas para cada estudiante reportado.
+
+Capa de Infraestructura (Optimización SQL):
+
+Transaccionalidad Atómica: Se encapsuló todo el proceso de reporte y amonestación automática en una sola Transacción SQL. Si un solo paso falla, se revierte todo para evitar "falsos reportes".
+
+Abstracción de Reglas: El repositorio ahora calcula dinámicamente el límite de faltas basándose en el tipo de culto, permitiendo que la capa de aplicación sea más limpia y fácil de leer.
+
+## 3. Integración con Flutter
+Se validó que el flujo de "Lista de Faltantes" (operación de conjuntos en SQL) sea eficiente para que la App de Flutter cargue instantáneamente la lista de estudiantes que no han pasado asistencia.
+
+Se confirmó que la respuesta del servidor tras un reporte masivo devuelva un resumen claro, permitiendo que el Monitor/Preceptor vea una confirmación visual del éxito de la operación en su dispositivo móvil.
