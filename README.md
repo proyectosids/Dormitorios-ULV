@@ -166,3 +166,20 @@ Abstracción de Reglas: El repositorio ahora calcula dinámicamente el límite d
 Se validó que el flujo de "Lista de Faltantes" (operación de conjuntos en SQL) sea eficiente para que la App de Flutter cargue instantáneamente la lista de estudiantes que no han pasado asistencia.
 
 Se confirmó que la respuesta del servidor tras un reporte masivo devuelva un resumen claro, permitiendo que el Monitor/Preceptor vea una confirmación visual del éxito de la operación en su dispositivo móvil.
+
+
+# Módulo de Usuarios
+
+## 1. Problemas Identificados en el Código Original
+- **Lógica Transaccional en Rutas**: El proceso de limpiar los datos de pasillo de un estudiante al quitarle el rol de monitor estaba mezclado con el código de Express, lo que ponía en riesgo la integridad si una de las dos consultas fallaba.
+- **Validaciones de Negocio Débiles**: Las comprobaciones de si un rol era válido o si el usuario ya tenía ese rol estaban dispersas, dificultando su reutilización en otros procesos administrativos.
+
+## 2. Mejoras Aplicadas (Arquitectura Limpia)
+- **Capa de Dominio**: Se centralizó la validación de roles permitidos en la entidad `UsuarioAdmin.js`, asegurando que solo los roles 2 (Monitor) y 3 (Estudiante) puedan ser gestionados a través de este flujo.
+- **Capa de Aplicación**: El Caso de Uso `CambiarRolUsuario.js` actúa como el único responsable de validar el estado previo del usuario antes de permitir una actualización.
+- **Capa de Infraestructura**:
+    - Se implementó una **Transacción SQL** en el repositorio para asegurar que el cambio de rol en la tabla `Usuarios` y la limpieza de privilegios en la tabla `Estudiantes` ocurran de forma atómica (Todo o nada).
+    - Se aisló la lógica de persistencia, permitiendo que las rutas sean agnósticas a cómo se estructuran las tablas en SQL Server.
+
+## 3. Integración con Flutter
+- Se mantuvo la compatibilidad con los ID de usuario enviados desde la App móvil, garantizando que los cambios de privilegios se reflejen inmediatamente en la interfaz del usuario tras un cierre e inicio de sesión.
