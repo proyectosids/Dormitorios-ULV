@@ -8,12 +8,11 @@ import limpiezaRoutes from './routes/limpieza.js';
 import estudiatesRoutes from './routes/estudiantes.js';
 import dormitoriosRoutes from './routes/dormitorios.js';
 import cultosRoutes from './routes/cultos.js';
-import reportesRoutes from '../../../routes/reportes.routes.js';
-import amonestacionesRoutes from '../../../routes/amonestaciones.routes.js';
-import asistenciaRoutes from '../../../routes/asistencia.routes.js';
-import usuariosRoutes from '../../../routes/usuarios.routes.js';
-
-import configuracionRoutes from '../../../routes/configuracion.routes.js';
+import reportesRoutes from './routes/reportes.js';
+import amonestacionesRoutes from './routes/amonestaciones.js';
+import asistenciaRoutes from './routes/asistencia.js';
+import usuariosRoutes from './routes/usuarios.js';
+import configuracionRoutes from './routes/configuracion.js';
 import firmasRoutes from '../../../routes/firmas.routes.js';
 
 dotenv.config();
