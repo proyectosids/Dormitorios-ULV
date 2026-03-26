@@ -197,3 +197,19 @@ Se confirmó que la respuesta del servidor tras un reporte masivo devuelva un re
 
 ## 3. Integración con Flutter
 - Se garantizó que la respuesta JSON informe a la App del preceptor sobre el éxito de la operación masiva, permitiendo que el frontend de Flutter refresque las vistas de ocupación inmediatamente.
+
+
+# Módulo de Firmas Digitales
+
+## 1. Problemas Identificados en el Código Original
+- **Lógica Condicional en Rutas**: El uso de `if/else` para decidir qué tabla actualizar (`Reportes` vs `Amonestaciones`) ensuciaba el controlador HTTP y dificultaba la extensión a nuevos documentos firmables.
+- **Manejo de Grandes Volúmenes de Datos**: La recepción de firmas en Base64 (Strings de gran tamaño) se procesaba sin una validación previa de la entidad, lo que podía causar errores de memoria si el formato no era el adecuado.
+
+## 2. Mejoras Aplicadas (Arquitectura Limpia)
+- **Capa de Dominio**: Se implementó la entidad `Firma.js` con un método estático de validación de tipos, centralizando los documentos que legalmente requieren firma en el Hogar Universitario.
+- **Capa de Infraestructura (Estrategia de Persistencia)**:
+    - Se abstrajo la lógica de actualización en `FirmaRepositorySql.js`. El repositorio ahora es capaz de resolver dinámicamente el destino de la firma sin que la capa de aplicación o de transporte tengan que conocer los nombres de las tablas de SQL Server.
+    - **Optimización de Tipos**: Se configuró explícitamente el uso de `sql.VarChar(sql.MAX)` para garantizar que las firmas de alta resolución enviadas desde Flutter no se trunquen al ser guardadas.
+
+## 3. Integración con Flutter
+- Se garantizó que el endpoint `/api/firmas/guardar` reciba las firmas generadas por el widget de "Signature Pad" en Flutter, asegurando que la reconstrucción del documento firmado sea íntegra y esté vinculada correctamente al historial del estudiante.
