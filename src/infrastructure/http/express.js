@@ -13,7 +13,7 @@ import amonestacionesRoutes from './routes/amonestaciones.js';
 import asistenciaRoutes from './routes/asistencia.js';
 import usuariosRoutes from './routes/usuarios.js';
 import configuracionRoutes from './routes/configuracion.js';
-import firmasRoutes from '../../../routes/firmas.routes.js';
+import firmasRoutes from './routes/firmas.js';
 
 dotenv.config();
 const app = express();
