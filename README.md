@@ -81,3 +81,18 @@ Mantenibilidad: La consulta de ocupación (que usa múltiples LEFT JOINs) quedó
 Se garantizó que los endpoints mantuvieran el mismo contrato de datos para que las listas desplegables (Dropdowns) de selección de pasillo y cuarto en la App de Flutter sigan funcionando sin ajustes en el frontend.
 
 El "Mapa de Ocupación" fue validado para asegurar que los nombres de los estudiantes aparezcan correctamente vinculados a sus números de cuarto correspondientes.
+
+
+# Módulo de Cultos
+
+### 1. Problemas Identificados en el Código Original
+- **Lógica de Catálogo Expuesta**: La consulta directa a la tabla `dormi.Cat_TipoCulto` dentro del controlador HTTP mezclaba la definición del esquema de base de datos con la respuesta del API.
+- **Falta de Escalabilidad**: Al no tener una capa de repositorio, agregar lógica para filtrar cultos por fecha o semestre resultaría en código desordenado dentro de las rutas.
+
+### 2. Mejoras Aplicadas (Arquitectura Limpia)
+- **Capa de Dominio**: Se creó la entidad `TipoCulto.js` para estandarizar la representación de los eventos religiosos dentro de la lógica del sistema.
+- **Capa de Infraestructura (Patrón Repository)**: Se implementó `CultoRepositorySql.js`, centralizando el acceso al catálogo. Esto permite que, si el catálogo migra a una base de datos externa o un servicio de microservicios, el cambio sea transparente para el resto de la aplicación.
+- **Simplicidad en Rutas**: El archivo `cultos.js` en infraestructura ahora solo actúa como un puente, cumpliendo con el principio de responsabilidad única.
+
+### 3. Integración con Flutter
+- Se mantuvo el contrato de respuesta JSON (`success`, `data`) para asegurar que los selectores de tipo de culto en la aplicación móvil Flutter sigan cargando la lista de opciones correctamente desde el servidor.
