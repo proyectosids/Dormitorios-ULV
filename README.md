@@ -183,3 +183,17 @@ Se confirmó que la respuesta del servidor tras un reporte masivo devuelva un re
 
 ## 3. Integración con Flutter
 - Se mantuvo la compatibilidad con los ID de usuario enviados desde la App móvil, garantizando que los cambios de privilegios se reflejen inmediatamente en la interfaz del usuario tras un cierre e inicio de sesión.
+
+
+# Módulo de Configuración
+
+## 1. Problemas Identificados en el Código Original
+- **Operaciones Críticas Expuestas**: Una acción de alto impacto (borrar asignaciones de cuartos de todos los estudiantes) vivía directamente en el archivo de rutas, sin una capa de protección intermedia.
+- **Lógica de Negocio en el Controlador**: La decisión de qué campos de la tabla `Estudiantes` limpiar al finalizar un semestre estaba acoplada al framework Express.
+
+## 2. Mejoras Aplicadas (Arquitectura Limpia)
+- **Capa de Aplicación (Seguridad)**: Se implementó el Caso de Uso `CerrarSemestreActual.js`, el cual valida que los datos de entrada sean correctos antes de siquiera intentar tocar la base de datos.
+- **Capa de Infraestructura (Integridad)**: Se utilizó una **Transacción SQL** en `ConfiguracionRepositorySql.js` para asegurar que el cierre del semestre anterior, la apertura del nuevo y el vaciado de cuartos ocurran como una única unidad de trabajo. Esto evita que el sistema quede en un estado inconsistente (ej. semestre cerrado pero estudiantes aún con cuarto asignado).
+
+## 3. Integración con Flutter
+- Se garantizó que la respuesta JSON informe a la App del preceptor sobre el éxito de la operación masiva, permitiendo que el frontend de Flutter refresque las vistas de ocupación inmediatamente.
