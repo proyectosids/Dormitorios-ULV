@@ -7,7 +7,7 @@ import authRoutes from './routes/auth.js';
 import limpiezaRoutes from './routes/limpieza.js'; 
 import estudiatesRoutes from './routes/estudiantes.js';
 import dormitoriosRoutes from './routes/dormitorios.js';
-import cultosRoutes from '../../../routes/cultos.routes.js';
+import cultosRoutes from './routes/cultos.js';
 import reportesRoutes from '../../../routes/reportes.routes.js';
 import amonestacionesRoutes from '../../../routes/amonestaciones.routes.js';
 import asistenciaRoutes from '../../../routes/asistencia.routes.js';
