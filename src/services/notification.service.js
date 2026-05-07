@@ -1,5 +1,5 @@
 import admin from 'firebase-admin';
-import { getConnection } from '../db.js';
+import { getConnection } from '../infrastructure/db/db.js';
 import sql from 'mssql';
 
 // Leer variable de entorno

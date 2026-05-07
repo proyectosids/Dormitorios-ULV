@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { RegistrarLimpieza } from '../../../application/usecases/RegistrarLimpieza.js';
+import { RegistrarLimpieza } from '../../../application/usescases/RegistrarLimpieza.js';
 import { LimpiezaRepositorySql } from '../../repositories/LimpiezaRepositorySql.js';
 import { subirImagen } from '../../../services/cloudinary.service.js';
 import { enviarNotificacion } from '../../../services/notification.service.js';

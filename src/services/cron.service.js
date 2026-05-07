@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import { v2 as cloudinary } from 'cloudinary';
-import { getConnection } from '../db.js';
+import { getConnection } from '../infrastructure/db/db.js';
 import sql from 'mssql';
 
 // Configuración de la tarea: Se ejecuta todos los días a las 3:00 AM

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { AsistenciaRepositorySql } from '../../repositories/AsistenciaRepositorySql.js';
-import { ReportarInasistenciaMasiva } from '../../../application/usecases/ReportarInasistenciaMasiva.js';
+import { ReportarInasistenciaMasiva } from '../../../application/usescases/ReportarInasistenciaMasiva.js';
 import { enviarNotificacion } from '../../../services/notification.service.js';
 
 const router = Router();
